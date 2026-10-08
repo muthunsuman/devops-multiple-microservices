@@ -1,3 +1,4 @@
+
 pipeline {
     agent any
 
@@ -23,14 +24,12 @@ pipeline {
             steps {
                 deleteDir()
 
-                // Explicit checkout: no checkout scm
                 git branch: "${GIT_BRANCH}",
                     url: "${GIT_REPO}"
 
                 sh '''
                     set -eu
-                    git fetch origin \
-                      +refs/heads/main:refs/remotes/origin/main
+                    git fetch origin +refs/heads/main:refs/remotes/origin/main
                 '''
 
                 script {
@@ -41,7 +40,6 @@ pipeline {
 
                     env.PREVIOUS_COMMIT = ''
 
-                    // Prefer the last successful commit if available.
                     def previous =
                         env.GIT_PREVIOUS_SUCCESSFUL_COMMIT?.trim()
 
@@ -56,7 +54,6 @@ pipeline {
                         }
                     }
 
-                    // Fallback for a first build or missing previous commit.
                     if (!env.PREVIOUS_COMMIT) {
                         def parentStatus = sh(
                             script: 'git rev-parse HEAD^',
@@ -72,9 +69,7 @@ pipeline {
                     }
 
                     echo "Current commit: ${env.CURRENT_COMMIT}"
-                    echo "Comparison base: ${
-                        env.PREVIOUS_COMMIT ?: 'none; first-build scan'
-                    }"
+                    echo "Comparison base: ${env.PREVIOUS_COMMIT ?: 'none; first-build scan'}"
                 }
             }
         }
@@ -98,14 +93,8 @@ pipeline {
                     def changedFiles = []
 
                     if (env.PREVIOUS_COMMIT) {
-                        // If comparison fails, fail safely rather than
-                        // silently skipping changes.
                         def diffOutput = sh(
-                            script: """
-                                git diff --name-only \
-                                  '${env.PREVIOUS_COMMIT}' \
-                                  '${env.CURRENT_COMMIT}'
-                            """,
+                            script: "git diff --name-only '${env.PREVIOUS_COMMIT}' '${env.CURRENT_COMMIT}'",
                             returnStdout: true
                         ).trim()
 
@@ -113,11 +102,8 @@ pipeline {
                             ? diffOutput.readLines()
                             : []
 
-                        echo "Changed files:\\n${
-                            changedFiles ? changedFiles.join('\\n') : 'None'
-                        }"
+                        echo "Changed files: ${changedFiles ? changedFiles.join(', ') : 'None'}"
                     } else {
-                        // First build: inspect all tracked service files.
                         def trackedOutput = sh(
                             script: 'git ls-files services/',
                             returnStdout: true
@@ -136,7 +122,6 @@ pipeline {
                         }
                     }
 
-                    // Only build services that still exist in this checkout.
                     def selected = affected.findAll { service ->
                         fileExists("services/${service}")
                     }
@@ -144,12 +129,9 @@ pipeline {
                     def deleted = affected - selected
 
                     if (deleted) {
-                        echo "Removed service directories; skipping build: ${
-                            deleted.join(', ')
-                        }"
+                        echo "Removed service directories; skipping build: ${deleted.join(', ')}"
                     }
 
-                    // If shared build files change, use a full service build.
                     def sharedFilesChanged = changedFiles.any { file ->
                         !file.startsWith('services/') &&
                         (
@@ -275,11 +257,8 @@ pipeline {
 
     post {
         success {
-            echo """
-                SUCCESS: Pipeline completed.
-                Services processed: ${env.BUILD_SERVICES ?: 'none'}
-                Commit: ${env.CURRENT_COMMIT ?: 'unknown'}
-            """
+            echo "SUCCESS: Pipeline completed. Services: ${env.BUILD_SERVICES ?: 'none'}"
+            echo "Commit: ${env.CURRENT_COMMIT ?: 'unknown'}"
         }
 
         failure {
