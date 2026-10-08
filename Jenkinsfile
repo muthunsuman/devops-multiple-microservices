@@ -1,210 +1,249 @@
 pipeline {
-agent any
+    agent any
 
-```
-triggers {
-    githubPush()
-}
+    triggers {
+        githubPush()
+    }
 
-options {
-    timestamps()
-    disableConcurrentBuilds()
-    timeout(time: 60, unit: 'MINUTES')
-    skipDefaultCheckout(true)
-}
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+        timeout(time: 60, unit: 'MINUTES')
+        skipDefaultCheckout(true)
+    }
 
-environment {
-    GIT_REPO = 'https://github.com/muthunsuman/devops-multiple-microservices.git'
-    GIT_BRANCH = 'main'
-}
+    environment {
+        GIT_REPO   = 'https://github.com/muthunsuman/devops-multiple-microservices.git'
+        GIT_BRANCH = 'main'
+    }
 
-stages {
-    stage('Checkout Source Code') {
-        steps {
-            deleteDir()
+    stages {
 
-            git branch: "${GIT_BRANCH}",
-                url: "${GIT_REPO}"
+        stage('Checkout Source Code') {
+            steps {
+                deleteDir()
 
-            sh '''
-                git fetch origin \
-                  +refs/heads/main:refs/remotes/origin/main
-            '''
+                git branch: "${GIT_BRANCH}",
+                    url: "${GIT_REPO}"
 
-            script {
-                env.CURRENT_COMMIT = sh(
-                    script: 'git rev-parse HEAD',
-                    returnStdout: true
-                ).trim()
+                sh '''
+                    set -eu
+                    git fetch origin \
+                      +refs/heads/main:refs/remotes/origin/main
+                '''
 
-                // Find the previous commit on main.
-                // This works even when the previous build failed.
-                def previous = sh(
-                    script: 'git rev-parse HEAD^',
-                    returnStatus: true
-                ) == 0
-                    ? sh(
-                        script: 'git rev-parse HEAD^',
+                script {
+                    env.CURRENT_COMMIT = sh(
+                        script: 'git rev-parse HEAD',
                         returnStdout: true
                     ).trim()
-                    : ''
 
-                if (previous) {
-                    env.PREVIOUS_COMMIT = previous
-                    env.CHANGE_BASE_FOUND = 'true'
-                } else {
-                    env.CHANGE_BASE_FOUND = 'false'
-                    env.BUILD_SERVICES = ''
-                    echo 'Initial commit: no parent commit to compare.'
+                    // Use the previous successful build's commit when available.
+                    // This helps detect changes across multiple commits.
+                    def previous = env.GIT_PREVIOUS_SUCCESSFUL_COMMIT?.trim()
+
+                    if (previous) {
+                        env.PREVIOUS_COMMIT = previous
+                    } else {
+                        // Fallback for the first build.
+                        def parentResult = sh(
+                            script: 'git rev-parse HEAD^',
+                            returnStatus: true
+                        )
+
+                        if (parentResult == 0) {
+                            env.PREVIOUS_COMMIT = sh(
+                                script: 'git rev-parse HEAD^',
+                                returnStdout: true
+                            ).trim()
+                        } else {
+                            env.PREVIOUS_COMMIT = ''
+                        }
+                    }
+
+                    if (env.PREVIOUS_COMMIT) {
+                        env.CHANGE_BASE_FOUND = 'true'
+                        echo "Comparison base: ${env.PREVIOUS_COMMIT}"
+                        echo "Current commit: ${env.CURRENT_COMMIT}"
+                    } else {
+                        env.CHANGE_BASE_FOUND = 'false'
+                        echo 'No previous commit available for comparison.'
+                    }
                 }
             }
         }
-    }
 
-    stage('Detect Changed Services') {
-        steps {
-            script {
-                def services = [
-                    'api-gateway',
-                    'auth-service',
-                    'cart-service',
-                    'inventory-service',
-                    'notification-service',
-                    'order-service',
-                    'payment-service',
-                    'product-service',
-                    'shipping-service',
-                    'user-service'
-                ]
+        stage('Detect Changed Services') {
+            steps {
+                script {
+                    def services = [
+                        'api-gateway',
+                        'auth-service',
+                        'cart-service',
+                        'inventory-service',
+                        'notification-service',
+                        'order-service',
+                        'payment-service',
+                        'product-service',
+                        'shipping-service',
+                        'user-service'
+                    ]
 
-                if (env.CHANGE_BASE_FOUND != 'true') {
-                    env.BUILD_SERVICES = ''
-                    echo 'No parent commit. Skipping service builds safely.'
-                } else {
-                    def changed = sh(
-                        script: "git diff --name-only ${env.PREVIOUS_COMMIT} ${env.CURRENT_COMMIT}",
-                        returnStdout: true
-                    ).trim()
+                    def selected = []
 
-                    echo "Changed files:\n${changed}"
+                    if (env.CHANGE_BASE_FOUND == 'true') {
+                        // Ensure the comparison commit is available locally.
+                        sh """
+                            git cat-file -e \
+                              '${env.PREVIOUS_COMMIT}^{commit}'
+                        """
 
-                    def files = changed
-                        ? changed.readLines()
-                        : []
+                        def changed = sh(
+                            script: """
+                                git diff --name-only \
+                                  '${env.PREVIOUS_COMMIT}' \
+                                  '${env.CURRENT_COMMIT}'
+                            """,
+                            returnStdout: true
+                        ).trim()
 
-                    def selected = services.findAll { service ->
-                        files.any { file ->
-                            file.startsWith("services/${service}/")
+                        echo "Changed files:\\n${changed ?: 'No files changed'}"
+
+                        def files = changed
+                            ? changed.readLines()
+                            : []
+
+                        selected = services.findAll { service ->
+                            files.any { file ->
+                                file.startsWith("services/${service}/")
+                            }
                         }
+                    } else {
+                        // First build: inspect the repository for service files.
+                        // Build only services that actually contain tracked files.
+                        def files = sh(
+                            script: 'git ls-files services/',
+                            returnStdout: true
+                        ).trim()
+
+                        def trackedFiles = files
+                            ? files.readLines()
+                            : []
+
+                        selected = services.findAll { service ->
+                            trackedFiles.any { file ->
+                                file.startsWith("services/${service}/")
+                            }
+                        }
+
+                        echo 'First build: selecting services containing tracked files.'
                     }
 
                     env.BUILD_SERVICES = selected.join(',')
 
                     if (selected) {
-                        echo "Changed services only: ${selected.join(', ')}"
+                        echo "Services selected: ${selected.join(', ')}"
                     } else {
-                        echo 'No service changes detected. Skipping all service builds and tests.'
+                        echo 'No service directories changed. Skipping service builds and tests.'
                     }
                 }
             }
         }
-    }
 
-    stage('Build Changed Services') {
-        when {
-            expression {
-                return !!env.BUILD_SERVICES?.trim()
+        stage('Build Changed Services') {
+            when {
+                expression {
+                    return !!env.BUILD_SERVICES?.trim()
+                }
             }
-        }
 
-        steps {
-            script {
-                def selected = env.BUILD_SERVICES.split(',')
-                def tasks = [:]
+            steps {
+                script {
+                    def selected = env.BUILD_SERVICES.split(',')
+                    def tasks = [:]
 
-                for (serviceName in selected) {
-                    def service = serviceName.trim()
+                    for (serviceName in selected) {
+                        def service = serviceName.trim()
 
-                    tasks[service] = {
-                        stage("Build: ${service}") {
-                            dir("services/${service}") {
-                                sh '''
-                                    set -eu
+                        tasks[service] = {
+                            stage("Build: ${service}") {
+                                dir("services/${service}") {
+                                    sh '''
+                                        set -eu
 
-                                    if [ -f ./mvnw ]; then
-                                        chmod +x ./mvnw
-                                        ./mvnw -B -DskipTests package
-                                    elif command -v mvn >/dev/null 2>&1; then
-                                        mvn -B -DskipTests package
-                                    else
-                                        echo "ERROR: Maven or Maven wrapper is required."
-                                        exit 1
-                                    fi
-                                '''
+                                        if [ -f ./mvnw ]; then
+                                            chmod +x ./mvnw
+                                            ./mvnw -B -DskipTests package
+                                        elif command -v mvn >/dev/null 2>&1; then
+                                            mvn -B -DskipTests package
+                                        else
+                                            echo "ERROR: Maven or mvnw is required."
+                                            exit 1
+                                        fi
+                                    '''
+                                }
                             }
                         }
                     }
+
+                    parallel tasks
                 }
-
-                parallel tasks
-            }
-        }
-    }
-
-    stage('Test Changed Services') {
-        when {
-            expression {
-                return !!env.BUILD_SERVICES?.trim()
             }
         }
 
-        steps {
-            script {
-                def selected = env.BUILD_SERVICES.split(',')
-                def tasks = [:]
+        stage('Test Changed Services') {
+            when {
+                expression {
+                    return !!env.BUILD_SERVICES?.trim()
+                }
+            }
 
-                for (serviceName in selected) {
-                    def service = serviceName.trim()
+            steps {
+                script {
+                    def selected = env.BUILD_SERVICES.split(',')
+                    def tasks = [:]
 
-                    tasks[service] = {
-                        stage("Test: ${service}") {
-                            dir("services/${service}") {
-                                sh '''
-                                    set -eu
+                    for (serviceName in selected) {
+                        def service = serviceName.trim()
 
-                                    if [ -f ./mvnw ]; then
-                                        chmod +x ./mvnw
-                                        ./mvnw -B test
-                                    elif command -v mvn >/dev/null 2>&1; then
-                                        mvn -B test
-                                    else
-                                        echo "ERROR: Maven or Maven wrapper is required."
-                                        exit 1
-                                    fi
-                                '''
+                        tasks[service] = {
+                            stage("Test: ${service}") {
+                                dir("services/${service}") {
+                                    sh '''
+                                        set -eu
+
+                                        if [ -f ./mvnw ]; then
+                                            chmod +x ./mvnw
+                                            ./mvnw -B test
+                                        elif command -v mvn >/dev/null 2>&1; then
+                                            mvn -B test
+                                        else
+                                            echo "ERROR: Maven or mvnw is required."
+                                            exit 1
+                                        fi
+                                    '''
+                                }
                             }
                         }
                     }
-                }
 
-                parallel tasks
+                    parallel tasks
+                }
             }
         }
     }
-}
 
-post {
-    success {
-        echo "SUCCESS: Pipeline completed. Services: ${env.BUILD_SERVICES ?: 'none'}"
+    post {
+        success {
+            echo "SUCCESS: Pipeline completed. Services: ${env.BUILD_SERVICES ?: 'none'}"
+        }
+
+        failure {
+            echo 'FAILED: Check checkout, change detection, build, or test logs.'
+        }
+
+        always {
+            echo 'Pipeline finished.'
+        }
     }
-
-    failure {
-        echo 'FAILED: Check checkout, change detection, build, or test logs.'
-    }
-
-    always {
-        echo 'Pipeline finished.'
-    }
-}
-
 }
