@@ -1,4 +1,3 @@
-
 pipeline {
     agent any
 
@@ -20,7 +19,7 @@ pipeline {
 
     stages {
 
-        // 1. CHECKOUT
+        // 1. CHECKOUT SOURCE CODE
         stage('Checkout Source Code') {
             steps {
                 deleteDir()
@@ -40,14 +39,14 @@ pipeline {
                         returnStdout: true
                     ).trim()
 
-                    // Previous successful build, if available.
+                    // Find the previous successful build commit.
                     def previous =
                         env.GIT_PREVIOUS_SUCCESSFUL_COMMIT?.trim()
 
                     if (previous) {
                         env.PREVIOUS_COMMIT = previous
                     } else {
-                        // First-build fallback: compare with parent commit.
+                        // First-build fallback.
                         def parentStatus = sh(
                             script: 'git rev-parse HEAD^',
                             returnStatus: true
@@ -119,7 +118,7 @@ pipeline {
                         }
 
                     } else {
-                        // First build: build only services with tracked files.
+                        // First build: select services containing tracked files.
                         def tracked = sh(
                             script: 'git ls-files services/',
                             returnStdout: true
@@ -149,8 +148,8 @@ pipeline {
             }
         }
 
-        // 3. BUILD ALL SELECTED SERVICES IN PARALLEL
-        // No nested stage() calls: Stage View stays compact.
+        // 3. BUILD CHANGED SERVICES IN PARALLEL
+        // One visible stage; no nested stage() calls.
         stage('Build Changed Services') {
             when {
                 expression {
@@ -199,7 +198,8 @@ pipeline {
             }
         }
 
-        // 4. TEST ALL SELECTED SERVICES IN PARALLEL
+        // 4. TEST CHANGED SERVICES IN PARALLEL
+        // One visible stage; tests start after all builds succeed.
         stage('Test Changed Services') {
             when {
                 expression {
@@ -266,3 +266,4 @@ pipeline {
         }
     }
 }
+
