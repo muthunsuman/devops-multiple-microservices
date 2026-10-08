@@ -1,8 +1,0 @@
-target/
-.idea/
-.vscode/
-*.log
-.env
-.terraform/
-*.tfstate
-*.tfstate.*

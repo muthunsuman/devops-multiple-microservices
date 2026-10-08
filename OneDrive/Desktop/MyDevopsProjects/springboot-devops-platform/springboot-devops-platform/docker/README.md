@@ -1,1 +1,0 @@
-Build from the repository root: `docker build -f docker/Dockerfile -t user-service:local services/user-service`. The build context is the service directory, so Docker COPY commands use that directory.

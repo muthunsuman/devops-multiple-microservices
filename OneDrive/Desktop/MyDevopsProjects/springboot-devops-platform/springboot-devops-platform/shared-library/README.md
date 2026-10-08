@@ -1,1 +1,0 @@
-Optional Jenkins Shared Library: move reusable methods into `vars/buildAndTest.groovy`, `vars/buildAndPushEcr.groovy`, and `vars/updateGitOps.groovy`. Keep credentials in Jenkins Credentials. Add the shared library only after the main Jenkinsfile works.

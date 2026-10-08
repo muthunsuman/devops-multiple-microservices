@@ -1,1 +1,0 @@
-GitHub webhook -> Jenkins change detection -> parallel Maven tests -> Docker build/scan -> ECR -> GitOps tag update -> Argo CD -> EKS. Spring Boot Actuator exposes health/metrics; Prometheus scrapes metrics and evaluates rules; Grafana visualizes metrics; Alertmanager sends email notifications.
