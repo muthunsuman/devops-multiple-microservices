@@ -2,11 +2,11 @@ pipeline {
   agent any
   options { timestamps(); disableConcurrentBuilds(); timeout(time: 60, unit: 'MINUTES') }
   environment {
-    AWS_REGION = 'ap-south-1'
-    AWS_ACCOUNT_ID = '111122223333'
-    ECR_REGISTRY = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-    IMAGE_TAG = "${BUILD_NUMBER}-${GIT_COMMIT}"
-    GITOPS_FILE = 'gitops/environments/dev/kustomization.yaml'
+    //AWS_REGION = 'ap-south-1'
+    //AWS_ACCOUNT_ID = '111122223333'
+    //ECR_REGISTRY = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+    //IMAGE_TAG = "${BUILD_NUMBER}-${GIT_COMMIT}"
+    //GITOPS_FILE = 'gitops/environments/dev/kustomization.yaml'
   }
   stages {
     stage('Checkout') { steps { checkout scm } }
