@@ -1,3 +1,4 @@
+
 pipeline {
     agent any
 
@@ -19,6 +20,7 @@ pipeline {
 
     stages {
 
+        // 1. CHECKOUT
         stage('Checkout Source Code') {
             steps {
                 deleteDir()
@@ -38,20 +40,20 @@ pipeline {
                         returnStdout: true
                     ).trim()
 
-                    // Use the previous successful build's commit when available.
-                    // This helps detect changes across multiple commits.
-                    def previous = env.GIT_PREVIOUS_SUCCESSFUL_COMMIT?.trim()
+                    // Previous successful build, if available.
+                    def previous =
+                        env.GIT_PREVIOUS_SUCCESSFUL_COMMIT?.trim()
 
                     if (previous) {
                         env.PREVIOUS_COMMIT = previous
                     } else {
-                        // Fallback for the first build.
-                        def parentResult = sh(
+                        // First-build fallback: compare with parent commit.
+                        def parentStatus = sh(
                             script: 'git rev-parse HEAD^',
                             returnStatus: true
                         )
 
-                        if (parentResult == 0) {
+                        if (parentStatus == 0) {
                             env.PREVIOUS_COMMIT = sh(
                                 script: 'git rev-parse HEAD^',
                                 returnStdout: true
@@ -61,18 +63,16 @@ pipeline {
                         }
                     }
 
-                    if (env.PREVIOUS_COMMIT) {
-                        env.CHANGE_BASE_FOUND = 'true'
-                        echo "Comparison base: ${env.PREVIOUS_COMMIT}"
-                        echo "Current commit: ${env.CURRENT_COMMIT}"
-                    } else {
-                        env.CHANGE_BASE_FOUND = 'false'
-                        echo 'No previous commit available for comparison.'
-                    }
+                    env.CHANGE_BASE_FOUND =
+                        env.PREVIOUS_COMMIT ? 'true' : 'false'
+
+                    echo "Current commit: ${env.CURRENT_COMMIT}"
+                    echo "Previous commit: ${env.PREVIOUS_COMMIT ?: 'none'}"
                 }
             }
         }
 
+        // 2. DETECT CHANGED SERVICES
         stage('Detect Changed Services') {
             steps {
                 script {
@@ -92,7 +92,6 @@ pipeline {
                     def selected = []
 
                     if (env.CHANGE_BASE_FOUND == 'true') {
-                        // Ensure the comparison commit is available locally.
                         sh """
                             git cat-file -e \
                               '${env.PREVIOUS_COMMIT}^{commit}'
@@ -107,7 +106,7 @@ pipeline {
                             returnStdout: true
                         ).trim()
 
-                        echo "Changed files:\\n${changed ?: 'No files changed'}"
+                        echo "Changed files:\n${changed ?: 'None'}"
 
                         def files = changed
                             ? changed.readLines()
@@ -118,38 +117,40 @@ pipeline {
                                 file.startsWith("services/${service}/")
                             }
                         }
+
                     } else {
-                        // First build: inspect the repository for service files.
-                        // Build only services that actually contain tracked files.
-                        def files = sh(
+                        // First build: build only services with tracked files.
+                        def tracked = sh(
                             script: 'git ls-files services/',
                             returnStdout: true
                         ).trim()
 
-                        def trackedFiles = files
-                            ? files.readLines()
+                        def files = tracked
+                            ? tracked.readLines()
                             : []
 
                         selected = services.findAll { service ->
-                            trackedFiles.any { file ->
+                            files.any { file ->
                                 file.startsWith("services/${service}/")
                             }
                         }
 
-                        echo 'First build: selecting services containing tracked files.'
+                        echo 'First build: selecting existing services.'
                     }
 
                     env.BUILD_SERVICES = selected.join(',')
 
                     if (selected) {
-                        echo "Services selected: ${selected.join(', ')}"
+                        echo "Selected services: ${env.BUILD_SERVICES}"
                     } else {
-                        echo 'No service directories changed. Skipping service builds and tests.'
+                        echo 'No service changes detected. Build and test will be skipped.'
                     }
                 }
             }
         }
 
+        // 3. BUILD ALL SELECTED SERVICES IN PARALLEL
+        // No nested stage() calls: Stage View stays compact.
         stage('Build Changed Services') {
             when {
                 expression {
@@ -159,38 +160,46 @@ pipeline {
 
             steps {
                 script {
-                    def selected = env.BUILD_SERVICES.split(',')
+                    def selected = env.BUILD_SERVICES
+                        .split(',')
+                        .collect { it.trim() }
+                        .findAll { it }
+
                     def tasks = [:]
 
                     for (serviceName in selected) {
-                        def service = serviceName.trim()
+                        def service = serviceName
 
                         tasks[service] = {
-                            stage("Build: ${service}") {
-                                dir("services/${service}") {
-                                    sh '''
-                                        set -eu
+                            dir("services/${service}") {
+                                echo "Building ${service}"
 
-                                        if [ -f ./mvnw ]; then
-                                            chmod +x ./mvnw
-                                            ./mvnw -B -DskipTests package
-                                        elif command -v mvn >/dev/null 2>&1; then
-                                            mvn -B -DskipTests package
-                                        else
-                                            echo "ERROR: Maven or mvnw is required."
-                                            exit 1
-                                        fi
-                                    '''
-                                }
+                                sh '''
+                                    set -eu
+
+                                    if [ -f ./mvnw ]; then
+                                        chmod +x ./mvnw
+                                        ./mvnw -B -DskipTests package
+
+                                    elif command -v mvn >/dev/null 2>&1; then
+                                        mvn -B -DskipTests package
+
+                                    else
+                                        echo "ERROR: Maven or mvnw is required."
+                                        exit 1
+                                    fi
+                                '''
                             }
                         }
                     }
 
+                    echo "Starting parallel builds: ${selected.join(', ')}"
                     parallel tasks
                 }
             }
         }
 
+        // 4. TEST ALL SELECTED SERVICES IN PARALLEL
         stage('Test Changed Services') {
             when {
                 expression {
@@ -200,33 +209,40 @@ pipeline {
 
             steps {
                 script {
-                    def selected = env.BUILD_SERVICES.split(',')
+                    def selected = env.BUILD_SERVICES
+                        .split(',')
+                        .collect { it.trim() }
+                        .findAll { it }
+
                     def tasks = [:]
 
                     for (serviceName in selected) {
-                        def service = serviceName.trim()
+                        def service = serviceName
 
                         tasks[service] = {
-                            stage("Test: ${service}") {
-                                dir("services/${service}") {
-                                    sh '''
-                                        set -eu
+                            dir("services/${service}") {
+                                echo "Testing ${service}"
 
-                                        if [ -f ./mvnw ]; then
-                                            chmod +x ./mvnw
-                                            ./mvnw -B test
-                                        elif command -v mvn >/dev/null 2>&1; then
-                                            mvn -B test
-                                        else
-                                            echo "ERROR: Maven or mvnw is required."
-                                            exit 1
-                                        fi
-                                    '''
-                                }
+                                sh '''
+                                    set -eu
+
+                                    if [ -f ./mvnw ]; then
+                                        chmod +x ./mvnw
+                                        ./mvnw -B test
+
+                                    elif command -v mvn >/dev/null 2>&1; then
+                                        mvn -B test
+
+                                    else
+                                        echo "ERROR: Maven or mvnw is required."
+                                        exit 1
+                                    fi
+                                '''
                             }
                         }
                     }
 
+                    echo "Starting parallel tests: ${selected.join(', ')}"
                     parallel tasks
                 }
             }
@@ -235,7 +251,10 @@ pipeline {
 
     post {
         success {
-            echo "SUCCESS: Pipeline completed. Services: ${env.BUILD_SERVICES ?: 'none'}"
+            echo """
+                SUCCESS: Pipeline completed.
+                Services processed: ${env.BUILD_SERVICES ?: 'none'}
+            """
         }
 
         failure {
