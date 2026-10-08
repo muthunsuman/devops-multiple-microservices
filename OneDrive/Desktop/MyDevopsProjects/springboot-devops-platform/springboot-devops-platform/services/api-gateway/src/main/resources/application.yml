@@ -1,0 +1,44 @@
+spring:
+  application:
+    name: api-gateway
+  cloud:
+    gateway:
+      routes:
+        - id: users
+          uri: ${USER_SERVICE_URL:http://user-service:8080}
+          predicates: [Path=/api/users/**]
+        - id: auth
+          uri: ${AUTH_SERVICE_URL:http://auth-service:8080}
+          predicates: [Path=/api/auth/**]
+        - id: products
+          uri: ${PRODUCT_SERVICE_URL:http://product-service:8080}
+          predicates: [Path=/api/products/**]
+        - id: inventory
+          uri: ${INVENTORY_SERVICE_URL:http://inventory-service:8080}
+          predicates: [Path=/api/inventory/**]
+        - id: cart
+          uri: ${CART_SERVICE_URL:http://cart-service:8080}
+          predicates: [Path=/api/cart/**]
+        - id: orders
+          uri: ${ORDER_SERVICE_URL:http://order-service:8080}
+          predicates: [Path=/api/orders/**]
+        - id: payments
+          uri: ${PAYMENT_SERVICE_URL:http://payment-service:8080}
+          predicates: [Path=/api/payments/**]
+        - id: shipping
+          uri: ${SHIPPING_SERVICE_URL:http://shipping-service:8080}
+          predicates: [Path=/api/shipping/**]
+        - id: notifications
+          uri: ${NOTIFICATION_SERVICE_URL:http://notification-service:8080}
+          predicates: [Path=/api/notifications/**]
+server:
+  port: ${SERVER_PORT:8080}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,gateway
+  endpoint:
+    health:
+      probes:
+        enabled: true
