@@ -217,7 +217,7 @@ pipeline {
         }
 
         failure {
-            echo 'FAILED: Check the relevant checkout, build, or test stage.'
+            echo 'FAILED: Checks the relevant checkout, build, or test stage.'
         }
 
         always {
