@@ -1,3 +1,4 @@
+
 pipeline {
     agent any
 
@@ -19,11 +20,11 @@ pipeline {
 
     stages {
 
-        // 1. CHECKOUT SOURCE CODE
         stage('Checkout Source Code') {
             steps {
                 deleteDir()
 
+                // Explicit checkout: no checkout scm
                 git branch: "${GIT_BRANCH}",
                     url: "${GIT_REPO}"
 
@@ -39,14 +40,25 @@ pipeline {
                         returnStdout: true
                     ).trim()
 
-                    // Find the previous successful build commit.
+                    env.PREVIOUS_COMMIT = ''
+
+                    // Prefer the last successful commit if available.
                     def previous =
                         env.GIT_PREVIOUS_SUCCESSFUL_COMMIT?.trim()
 
                     if (previous) {
-                        env.PREVIOUS_COMMIT = previous
-                    } else {
-                        // First-build fallback.
+                        def validPrevious = sh(
+                            script: "git cat-file -e '${previous}^{commit}'",
+                            returnStatus: true
+                        ) == 0
+
+                        if (validPrevious) {
+                            env.PREVIOUS_COMMIT = previous
+                        }
+                    }
+
+                    // Fallback for a first build or missing previous commit.
+                    if (!env.PREVIOUS_COMMIT) {
                         def parentStatus = sh(
                             script: 'git rev-parse HEAD^',
                             returnStatus: true
@@ -57,21 +69,17 @@ pipeline {
                                 script: 'git rev-parse HEAD^',
                                 returnStdout: true
                             ).trim()
-                        } else {
-                            env.PREVIOUS_COMMIT = ''
                         }
                     }
 
-                    env.CHANGE_BASE_FOUND =
-                        env.PREVIOUS_COMMIT ? 'true' : 'false'
-
                     echo "Current commit: ${env.CURRENT_COMMIT}"
-                    echo "Previous commit: ${env.PREVIOUS_COMMIT ?: 'none'}"
+                    echo "Comparison base: ${
+                        env.PREVIOUS_COMMIT ?: 'none; first-build scan'
+                    }"
                 }
             }
         }
 
-        // 2. DETECT CHANGED SERVICES
         stage('Detect Changed Services') {
             steps {
                 script {
@@ -88,15 +96,12 @@ pipeline {
                         'user-service'
                     ]
 
-                    def selected = []
+                    def changedFiles = []
 
-                    if (env.CHANGE_BASE_FOUND == 'true') {
-                        sh """
-                            git cat-file -e \
-                              '${env.PREVIOUS_COMMIT}^{commit}'
-                        """
-
-                        def changed = sh(
+                    if (env.PREVIOUS_COMMIT) {
+                        // If comparison fails, fail safely rather than
+                        // silently skipping changes.
+                        def diffOutput = sh(
                             script: """
                                 git diff --name-only \
                                   '${env.PREVIOUS_COMMIT}' \
@@ -105,51 +110,77 @@ pipeline {
                             returnStdout: true
                         ).trim()
 
-                        echo "Changed files:\n${changed ?: 'None'}"
-
-                        def files = changed
-                            ? changed.readLines()
+                        changedFiles = diffOutput
+                            ? diffOutput.readLines()
                             : []
 
-                        selected = services.findAll { service ->
-                            files.any { file ->
-                                file.startsWith("services/${service}/")
-                            }
-                        }
-
+                        echo "Changed files:\\n${
+                            changedFiles ? changedFiles.join('\\n') : 'None'
+                        }"
                     } else {
-                        // First build: select services containing tracked files.
-                        def tracked = sh(
+                        // First build: inspect all tracked service files.
+                        def trackedOutput = sh(
                             script: 'git ls-files services/',
                             returnStdout: true
                         ).trim()
 
-                        def files = tracked
-                            ? tracked.readLines()
+                        changedFiles = trackedOutput
+                            ? trackedOutput.readLines()
                             : []
 
-                        selected = services.findAll { service ->
-                            files.any { file ->
-                                file.startsWith("services/${service}/")
-                            }
-                        }
+                        echo 'No comparison base found; scanning all services.'
+                    }
 
-                        echo 'First build: selecting existing services.'
+                    def affected = services.findAll { service ->
+                        changedFiles.any { file ->
+                            file.startsWith("services/${service}/")
+                        }
+                    }
+
+                    // Only build services that still exist in this checkout.
+                    def selected = affected.findAll { service ->
+                        fileExists("services/${service}")
+                    }
+
+                    def deleted = affected - selected
+
+                    if (deleted) {
+                        echo "Removed service directories; skipping build: ${
+                            deleted.join(', ')
+                        }"
+                    }
+
+                    // If shared build files change, use a full service build.
+                    def sharedFilesChanged = changedFiles.any { file ->
+                        !file.startsWith('services/') &&
+                        (
+                            file == 'pom.xml' ||
+                            file == 'mvnw' ||
+                            file.startsWith('.mvn/') ||
+                            file.startsWith('shared-library/') ||
+                            file == 'Jenkinsfile'
+                        )
+                    }
+
+                    if (sharedFilesChanged) {
+                        echo 'Shared build configuration changed; selecting all existing services.'
+
+                        selected = services.findAll { service ->
+                            fileExists("services/${service}")
+                        }
                     }
 
                     env.BUILD_SERVICES = selected.join(',')
 
                     if (selected) {
-                        echo "Selected services: ${env.BUILD_SERVICES}"
+                        echo "Services selected: ${env.BUILD_SERVICES}"
                     } else {
-                        echo 'No service changes detected. Build and test will be skipped.'
+                        echo 'No applicable service changes. Build and test stages will be skipped.'
                     }
                 }
             }
         }
 
-        // 3. BUILD CHANGED SERVICES IN PARALLEL
-        // One visible stage; no nested stage() calls.
         stage('Build Changed Services') {
             when {
                 expression {
@@ -166,7 +197,7 @@ pipeline {
 
                     def tasks = [:]
 
-                    for (serviceName in selected) {
+                    selected.each { serviceName ->
                         def service = serviceName
 
                         tasks[service] = {
@@ -179,10 +210,8 @@ pipeline {
                                     if [ -f ./mvnw ]; then
                                         chmod +x ./mvnw
                                         ./mvnw -B -DskipTests package
-
                                     elif command -v mvn >/dev/null 2>&1; then
                                         mvn -B -DskipTests package
-
                                     else
                                         echo "ERROR: Maven or mvnw is required."
                                         exit 1
@@ -192,14 +221,12 @@ pipeline {
                         }
                     }
 
-                    echo "Starting parallel builds: ${selected.join(', ')}"
+                    echo "Building in parallel: ${selected.join(', ')}"
                     parallel tasks
                 }
             }
         }
 
-        // 4. TEST CHANGED SERVICES IN PARALLEL
-        // One visible stage; tests start after all builds succeed.
         stage('Test Changed Services') {
             when {
                 expression {
@@ -216,7 +243,7 @@ pipeline {
 
                     def tasks = [:]
 
-                    for (serviceName in selected) {
+                    selected.each { serviceName ->
                         def service = serviceName
 
                         tasks[service] = {
@@ -229,10 +256,8 @@ pipeline {
                                     if [ -f ./mvnw ]; then
                                         chmod +x ./mvnw
                                         ./mvnw -B test
-
                                     elif command -v mvn >/dev/null 2>&1; then
                                         mvn -B test
-
                                     else
                                         echo "ERROR: Maven or mvnw is required."
                                         exit 1
@@ -242,7 +267,7 @@ pipeline {
                         }
                     }
 
-                    echo "Starting parallel tests: ${selected.join(', ')}"
+                    echo "Testing in parallel: ${selected.join(', ')}"
                     parallel tasks
                 }
             }
@@ -254,6 +279,7 @@ pipeline {
             echo """
                 SUCCESS: Pipeline completed.
                 Services processed: ${env.BUILD_SERVICES ?: 'none'}
+                Commit: ${env.CURRENT_COMMIT ?: 'unknown'}
             """
         }
 
