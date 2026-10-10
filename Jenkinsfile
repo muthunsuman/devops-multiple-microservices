@@ -14,11 +14,11 @@ pipeline {
     }
 
     environment {
-        GIT_REPO      = 'https://github.com/muthunsuman/devops-multiple-microservices.git'
-        GIT_BRANCH    = 'main'
-        AWS_REGION    = ' ap-southeast-2'
+        GIT_REPO       = 'https://github.com/muthunsuman/devops-multiple-microservices.git'
+        GIT_BRANCH     = 'main'
+        AWS_REGION     = 'ap-south-1'
         AWS_ACCOUNT_ID = '028610956643'
-        DOCKERFILE    = 'docker/Dockerfile'
+        DOCKERFILE     = 'docker/Dockerfile'
     }
 
     stages {
@@ -26,8 +26,7 @@ pipeline {
             steps {
                 deleteDir()
 
-                git branch: "${GIT_BRANCH}",
-                    url: "${GIT_REPO}"
+                git branch: "${GIT_BRANCH}", url: "${GIT_REPO}"
 
                 script {
                     env.CURRENT_COMMIT = sh(
@@ -37,8 +36,7 @@ pipeline {
 
                     env.PREVIOUS_COMMIT = ''
 
-                    def previous =
-                        env.GIT_PREVIOUS_SUCCESSFUL_COMMIT?.trim()
+                    def previous = env.GIT_PREVIOUS_SUCCESSFUL_COMMIT?.trim()
 
                     if (previous) {
                         def valid = sh(
@@ -52,12 +50,12 @@ pipeline {
                     }
 
                     if (!env.PREVIOUS_COMMIT) {
-                        def parentStatus = sh(
+                        def status = sh(
                             script: 'git rev-parse HEAD^',
                             returnStatus: true
                         )
 
-                        if (parentStatus == 0) {
+                        if (status == 0) {
                             env.PREVIOUS_COMMIT = sh(
                                 script: 'git rev-parse HEAD^',
                                 returnStdout: true
@@ -99,11 +97,7 @@ pipeline {
 
                     if (env.PREVIOUS_COMMIT) {
                         def output = sh(
-                            script: """
-                                git diff --name-only \
-                                  '${env.PREVIOUS_COMMIT}' \
-                                  '${env.CURRENT_COMMIT}'
-                            """,
+                            script: "git diff --name-only '${env.PREVIOUS_COMMIT}' '${env.CURRENT_COMMIT}'",
                             returnStdout: true
                         ).trim()
 
@@ -145,23 +139,18 @@ pipeline {
 
                     env.BUILD_SERVICES = selected.join(',')
 
-                    echo "Selected services: ${
-                        env.BUILD_SERVICES ?: 'none'
-                    }"
+                    echo "Selected services: ${env.BUILD_SERVICES ?: 'none'}"
                 }
             }
         }
 
         stage('Validate AWS and Tools') {
             when {
-                expression {
-                    return !!env.BUILD_SERVICES?.trim()
-                }
+                expression { return !!env.BUILD_SERVICES?.trim() }
             }
             steps {
                 sh '''
                     set -eu
-
                     command -v java
                     command -v mvn
                     command -v docker
@@ -187,29 +176,21 @@ pipeline {
 
         stage('Build Changed Services') {
             when {
-                expression {
-                    return !!env.BUILD_SERVICES?.trim()
-                }
+                expression { return !!env.BUILD_SERVICES?.trim() }
             }
             steps {
                 script {
-                    def selected = env.BUILD_SERVICES
-                        .split(',')
-                        .collect { it.trim() }
-                        .findAll { it }
-
+                    def selected = env.BUILD_SERVICES.split(',').findAll { it }
                     def tasks = [:]
 
                     selected.each { serviceName ->
-                        def service = serviceName
+                        def service = serviceName.trim()
 
                         tasks[service] = {
                             dir("services/${service}") {
                                 echo "Building ${service}"
-
                                 sh '''
                                     set -eu
-
                                     if [ -f ./mvnw ]; then
                                         chmod +x ./mvnw
                                         ./mvnw -B -DskipTests package
@@ -228,29 +209,21 @@ pipeline {
 
         stage('Test Changed Services') {
             when {
-                expression {
-                    return !!env.BUILD_SERVICES?.trim()
-                }
+                expression { return !!env.BUILD_SERVICES?.trim() }
             }
             steps {
                 script {
-                    def selected = env.BUILD_SERVICES
-                        .split(',')
-                        .collect { it.trim() }
-                        .findAll { it }
-
+                    def selected = env.BUILD_SERVICES.split(',').findAll { it }
                     def tasks = [:]
 
                     selected.each { serviceName ->
-                        def service = serviceName
+                        def service = serviceName.trim()
 
                         tasks[service] = {
                             dir("services/${service}") {
                                 echo "Testing ${service}"
-
                                 sh '''
                                     set -eu
-
                                     if [ -f ./mvnw ]; then
                                         ./mvnw -B test
                                     else
@@ -268,26 +241,22 @@ pipeline {
 
         stage('Prepare ECR Repositories') {
             when {
-                expression {
-                    return !!env.BUILD_SERVICES?.trim()
-                }
+                expression { return !!env.BUILD_SERVICES?.trim() }
             }
             steps {
                 script {
-                    def selected = env.BUILD_SERVICES
-                        .split(',')
-                        .collect { it.trim() }
-                        .findAll { it }
+                    def selected = env.BUILD_SERVICES.split(',').findAll { it }
 
-                    selected.each { service ->
+                    selected.each { serviceName ->
+                        def service = serviceName.trim()
+
                         withEnv(["SERVICE_NAME=${service}"]) {
                             sh '''
                                 set -eu
 
                                 if ! aws ecr describe-repositories \
                                     --repository-names "$SERVICE_NAME" \
-                                    --region "$AWS_REGION" \
-                                    >/dev/null 2>&1; then
+                                    --region "$AWS_REGION" >/dev/null 2>&1; then
 
                                     aws ecr create-repository \
                                         --repository-name "$SERVICE_NAME" \
@@ -302,40 +271,31 @@ pipeline {
 
         stage('Login to Amazon ECR') {
             when {
-                expression {
-                    return !!env.BUILD_SERVICES?.trim()
-                }
+                expression { return !!env.BUILD_SERVICES?.trim() }
             }
             steps {
                 sh '''
                     set -eu
 
-                    aws ecr get-login-password \
-                        --region "$AWS_REGION" |
-                    docker login \
-                        --username AWS \
-                        --password-stdin "$ECR_REGISTRY"
+                    aws ecr get-login-password --region "$AWS_REGION" |
+                        docker login \
+                            --username AWS \
+                            --password-stdin "$ECR_REGISTRY"
                 '''
             }
         }
 
         stage('Build and Push Docker Images') {
             when {
-                expression {
-                    return !!env.BUILD_SERVICES?.trim()
-                }
+                expression { return !!env.BUILD_SERVICES?.trim() }
             }
             steps {
                 script {
-                    def selected = env.BUILD_SERVICES
-                        .split(',')
-                        .collect { it.trim() }
-                        .findAll { it }
-
+                    def selected = env.BUILD_SERVICES.split(',').findAll { it }
                     def tasks = [:]
 
                     selected.each { serviceName ->
-                        def service = serviceName
+                        def service = serviceName.trim()
 
                         tasks[service] = {
                             withEnv(["SERVICE_NAME=${service}"]) {
@@ -349,8 +309,7 @@ pipeline {
                                        ! find "$SERVICE_DIR/target" \
                                            -maxdepth 1 -type f \
                                            -name '*.jar' \
-                                           ! -name '*.original' \
-                                           | grep -q .; then
+                                           ! -name '*.original' | grep -q .; then
                                         echo "ERROR: No packaged JAR for $SERVICE_NAME"
                                         exit 1
                                     fi
@@ -361,14 +320,10 @@ pipeline {
                                         BUILD_FILE="$SERVICE_DIR/Dockerfile"
                                     else
                                         echo "ERROR: No Dockerfile found"
-                                        echo "Expected $DOCKERFILE or $SERVICE_DIR/Dockerfile"
                                         exit 1
                                     fi
 
-                                    echo "Building image: $IMAGE:$IMAGE_TAG"
-
-                                    docker build \
-                                        --pull \
+                                    docker build --pull \
                                         -f "$BUILD_FILE" \
                                         -t "$IMAGE:$IMAGE_TAG" \
                                         -t "$IMAGE:latest" \
@@ -377,7 +332,7 @@ pipeline {
                                     docker push "$IMAGE:$IMAGE_TAG"
                                     docker push "$IMAGE:latest"
 
-                                    echo "Successfully pushed $IMAGE:$IMAGE_TAG"
+                                    echo "Pushed $IMAGE:$IMAGE_TAG"
                                 '''
                             }
                         }
@@ -391,16 +346,14 @@ pipeline {
 
     post {
         success {
-            echo """
-                SUCCESS: Pipeline completed.
-                Services: ${env.BUILD_SERVICES ?: 'none'}
-                Commit: ${env.CURRENT_COMMIT ?: 'unknown'}
-                Image tag: ${env.IMAGE_TAG ?: 'none'}
-            """
+            echo "SUCCESS: Pipeline completed."
+            echo "Services: ${env.BUILD_SERVICES ?: 'none'}"
+            echo "Commit: ${env.CURRENT_COMMIT ?: 'unknown'}"
+            echo "Image tag: ${env.IMAGE_TAG ?: 'none'}"
         }
 
         failure {
-            echo 'FAILED: Check the stage logs for the error.'
+            echo 'FAILED: Check the stage logs.'
         }
 
         always {
