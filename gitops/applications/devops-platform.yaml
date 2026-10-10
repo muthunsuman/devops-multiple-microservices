@@ -2,7 +2,7 @@ apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: devops-platform-dev
-  namespace: argocd
+  namespace: dev
 spec:
   project: default
 
