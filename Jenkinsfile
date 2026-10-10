@@ -16,12 +16,16 @@ pipeline {
     environment {
         GIT_REPO       = 'https://github.com/muthunsuman/devops-multiple-microservices.git'
         GIT_BRANCH     = 'main'
-        AWS_REGION     = 'ap-south-1'
+
+        AWS_REGION     = 'ap-southeast-2'
         AWS_ACCOUNT_ID = '028610956643'
+
+        ECR_REPOSITORY = 'devopsmultiplemicroservice'
         DOCKERFILE     = 'docker/Dockerfile'
     }
 
     stages {
+
         stage('Checkout Source Code') {
             steps {
                 deleteDir()
@@ -36,7 +40,8 @@ pipeline {
 
                     env.PREVIOUS_COMMIT = ''
 
-                    def previous = env.GIT_PREVIOUS_SUCCESSFUL_COMMIT?.trim()
+                    def previous =
+                        env.GIT_PREVIOUS_SUCCESSFUL_COMMIT?.trim()
 
                     if (previous) {
                         def valid = sh(
@@ -69,10 +74,11 @@ pipeline {
                     env.ECR_REGISTRY =
                         "${env.AWS_ACCOUNT_ID}.dkr.ecr.${env.AWS_REGION}.amazonaws.com"
 
-                    echo "Commit: ${env.CURRENT_COMMIT}"
+                    echo "Current commit: ${env.CURRENT_COMMIT}"
                     echo "Previous commit: ${env.PREVIOUS_COMMIT ?: 'none'}"
+                    echo "AWS region: ${env.AWS_REGION}"
+                    echo "ECR repository: ${env.ECR_REPOSITORY}"
                     echo "Image tag: ${env.IMAGE_TAG}"
-                    echo "ECR registry: ${env.ECR_REGISTRY}"
                 }
             }
         }
@@ -103,6 +109,7 @@ pipeline {
 
                         changedFiles = output ? output.readLines() : []
                     } else {
+                        // First build: build each existing service.
                         def output = sh(
                             script: 'git ls-files',
                             returnStdout: true
@@ -120,8 +127,8 @@ pipeline {
                         }
                     }
 
+                    // Shared build files affect every service.
                     def sharedChanged = changedFiles.any { file ->
-                        file == 'Jenkinsfile' ||
                         file == 'pom.xml' ||
                         file == 'mvnw' ||
                         file.startsWith('.mvn/') ||
@@ -134,23 +141,30 @@ pipeline {
                             fileExists("services/${service}")
                         }
 
-                        echo 'Shared build configuration changed.'
+                        echo 'Shared build configuration changed; selecting all services.'
                     }
 
                     env.BUILD_SERVICES = selected.join(',')
 
-                    echo "Selected services: ${env.BUILD_SERVICES ?: 'none'}"
+                    if (selected) {
+                        echo "Services selected: ${env.BUILD_SERVICES}"
+                    } else {
+                        echo 'No relevant microservice or shared build changes detected.'
+                    }
                 }
             }
         }
 
-        stage('Validate AWS and Tools') {
+        stage('Validate Tools and AWS Identity') {
             when {
-                expression { return !!env.BUILD_SERVICES?.trim() }
+                expression {
+                    return !!env.BUILD_SERVICES?.trim()
+                }
             }
             steps {
                 sh '''
                     set -eu
+
                     command -v java
                     command -v mvn
                     command -v docker
@@ -174,13 +188,36 @@ pipeline {
             }
         }
 
+        stage('Verify Existing ECR Repository') {
+            when {
+                expression {
+                    return !!env.BUILD_SERVICES?.trim()
+                }
+            }
+            steps {
+                sh '''
+                    set -eu
+
+                    aws ecr describe-repositories \
+                        --repository-names "$ECR_REPOSITORY" \
+                        --region "$AWS_REGION"
+
+                    echo "Verified existing ECR repository."
+                '''
+            }
+        }
+
         stage('Build Changed Services') {
             when {
-                expression { return !!env.BUILD_SERVICES?.trim() }
+                expression {
+                    return !!env.BUILD_SERVICES?.trim()
+                }
             }
             steps {
                 script {
-                    def selected = env.BUILD_SERVICES.split(',').findAll { it }
+                    def selected =
+                        env.BUILD_SERVICES.split(',').findAll { it }
+
                     def tasks = [:]
 
                     selected.each { serviceName ->
@@ -189,8 +226,10 @@ pipeline {
                         tasks[service] = {
                             dir("services/${service}") {
                                 echo "Building ${service}"
+
                                 sh '''
                                     set -eu
+
                                     if [ -f ./mvnw ]; then
                                         chmod +x ./mvnw
                                         ./mvnw -B -DskipTests package
@@ -209,11 +248,15 @@ pipeline {
 
         stage('Test Changed Services') {
             when {
-                expression { return !!env.BUILD_SERVICES?.trim() }
+                expression {
+                    return !!env.BUILD_SERVICES?.trim()
+                }
             }
             steps {
                 script {
-                    def selected = env.BUILD_SERVICES.split(',').findAll { it }
+                    def selected =
+                        env.BUILD_SERVICES.split(',').findAll { it }
+
                     def tasks = [:]
 
                     selected.each { serviceName ->
@@ -222,8 +265,10 @@ pipeline {
                         tasks[service] = {
                             dir("services/${service}") {
                                 echo "Testing ${service}"
+
                                 sh '''
                                     set -eu
+
                                     if [ -f ./mvnw ]; then
                                         ./mvnw -B test
                                     else
@@ -239,59 +284,36 @@ pipeline {
             }
         }
 
-        stage('Prepare ECR Repositories') {
+        stage('Login to Existing ECR') {
             when {
-                expression { return !!env.BUILD_SERVICES?.trim() }
-            }
-            steps {
-                script {
-                    def selected = env.BUILD_SERVICES.split(',').findAll { it }
-
-                    selected.each { serviceName ->
-                        def service = serviceName.trim()
-
-                        withEnv(["SERVICE_NAME=${service}"]) {
-                            sh '''
-                                set -eu
-
-                                if ! aws ecr describe-repositories \
-                                    --repository-names "$SERVICE_NAME" \
-                                    --region "$AWS_REGION" >/dev/null 2>&1; then
-
-                                    aws ecr create-repository \
-                                        --repository-name "$SERVICE_NAME" \
-                                        --region "$AWS_REGION"
-                                fi
-                            '''
-                        }
-                    }
+                expression {
+                    return !!env.BUILD_SERVICES?.trim()
                 }
-            }
-        }
-
-        stage('Login to Amazon ECR') {
-            when {
-                expression { return !!env.BUILD_SERVICES?.trim() }
             }
             steps {
                 sh '''
                     set -eu
 
-                    aws ecr get-login-password --region "$AWS_REGION" |
-                        docker login \
-                            --username AWS \
-                            --password-stdin "$ECR_REGISTRY"
+                    aws ecr get-login-password \
+                        --region "$AWS_REGION" |
+                    docker login \
+                        --username AWS \
+                        --password-stdin "$ECR_REGISTRY"
                 '''
             }
         }
 
-        stage('Build and Push Docker Images') {
+        stage('Build and Push Changed Service Images') {
             when {
-                expression { return !!env.BUILD_SERVICES?.trim() }
+                expression {
+                    return !!env.BUILD_SERVICES?.trim()
+                }
             }
             steps {
                 script {
-                    def selected = env.BUILD_SERVICES.split(',').findAll { it }
+                    def selected =
+                        env.BUILD_SERVICES.split(',').findAll { it }
+
                     def tasks = [:]
 
                     selected.each { serviceName ->
@@ -303,14 +325,16 @@ pipeline {
                                     set -eu
 
                                     SERVICE_DIR="services/$SERVICE_NAME"
-                                    IMAGE="$ECR_REGISTRY/$SERVICE_NAME"
+                                    IMAGE="$ECR_REGISTRY/$ECR_REPOSITORY"
+
+                                    echo "Building image for $SERVICE_NAME"
 
                                     if [ ! -d "$SERVICE_DIR/target" ] ||
                                        ! find "$SERVICE_DIR/target" \
                                            -maxdepth 1 -type f \
                                            -name '*.jar' \
                                            ! -name '*.original' | grep -q .; then
-                                        echo "ERROR: No packaged JAR for $SERVICE_NAME"
+                                        echo "ERROR: No packaged JAR found for $SERVICE_NAME"
                                         exit 1
                                     fi
 
@@ -319,20 +343,25 @@ pipeline {
                                     elif [ -f "$SERVICE_DIR/Dockerfile" ]; then
                                         BUILD_FILE="$SERVICE_DIR/Dockerfile"
                                     else
-                                        echo "ERROR: No Dockerfile found"
+                                        echo "ERROR: Dockerfile not found"
                                         exit 1
                                     fi
 
+                                    VERSIONED_IMAGE="$IMAGE:$SERVICE_NAME-$IMAGE_TAG"
+                                    LATEST_IMAGE="$IMAGE:$SERVICE_NAME-latest"
+
                                     docker build --pull \
                                         -f "$BUILD_FILE" \
-                                        -t "$IMAGE:$IMAGE_TAG" \
-                                        -t "$IMAGE:latest" \
+                                        -t "$VERSIONED_IMAGE" \
+                                        -t "$LATEST_IMAGE" \
                                         "$SERVICE_DIR"
 
-                                    docker push "$IMAGE:$IMAGE_TAG"
-                                    docker push "$IMAGE:latest"
+                                    docker push "$VERSIONED_IMAGE"
+                                    docker push "$LATEST_IMAGE"
 
-                                    echo "Pushed $IMAGE:$IMAGE_TAG"
+                                    echo "Successfully pushed:"
+                                    echo "$VERSIONED_IMAGE"
+                                    echo "$LATEST_IMAGE"
                                 '''
                             }
                         }
@@ -346,14 +375,13 @@ pipeline {
 
     post {
         success {
-            echo "SUCCESS: Pipeline completed."
-            echo "Services: ${env.BUILD_SERVICES ?: 'none'}"
+            echo 'Pipeline completed successfully.'
+            echo "Services built: ${env.BUILD_SERVICES ?: 'none'}"
             echo "Commit: ${env.CURRENT_COMMIT ?: 'unknown'}"
-            echo "Image tag: ${env.IMAGE_TAG ?: 'none'}"
         }
 
         failure {
-            echo 'FAILED: Check the stage logs.'
+            echo 'Pipeline failed. Check the stage logs.'
         }
 
         always {
