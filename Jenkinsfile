@@ -1,4 +1,3 @@
-
 pipeline {
     agent any
 
@@ -17,19 +16,20 @@ pipeline {
         GIT_REPO       = 'https://github.com/muthunsuman/devops-multiple-microservices.git'
         GIT_BRANCH     = 'main'
 
-        AWS_REGION     = 'ap-southeast-2'
+        // Verify these values against your actual AWS resources.
+        AWS_REGION     = 'ap-south-1'
         AWS_ACCOUNT_ID = '028610956643'
+        EKS_CLUSTER    = 'devops-eks-cluster'
+        K8S_NAMESPACE  = 'dev'
 
         ECR_REPOSITORY = 'devopsmultiplemicroservice'
         DOCKERFILE     = 'docker/Dockerfile'
     }
 
     stages {
-
         stage('Checkout Source Code') {
             steps {
                 deleteDir()
-
                 git branch: "${GIT_BRANCH}", url: "${GIT_REPO}"
 
                 script {
@@ -39,9 +39,7 @@ pipeline {
                     ).trim()
 
                     env.PREVIOUS_COMMIT = ''
-
-                    def previous =
-                        env.GIT_PREVIOUS_SUCCESSFUL_COMMIT?.trim()
+                    def previous = env.GIT_PREVIOUS_SUCCESSFUL_COMMIT?.trim()
 
                     if (previous) {
                         def valid = sh(
@@ -55,12 +53,12 @@ pipeline {
                     }
 
                     if (!env.PREVIOUS_COMMIT) {
-                        def status = sh(
+                        def parentStatus = sh(
                             script: 'git rev-parse HEAD^',
                             returnStatus: true
                         )
 
-                        if (status == 0) {
+                        if (parentStatus == 0) {
                             env.PREVIOUS_COMMIT = sh(
                                 script: 'git rev-parse HEAD^',
                                 returnStdout: true
@@ -68,11 +66,8 @@ pipeline {
                         }
                     }
 
-                    env.IMAGE_TAG =
-                        "${env.BUILD_NUMBER}-${env.CURRENT_COMMIT.take(7)}"
-
-                    env.ECR_REGISTRY =
-                        "${env.AWS_ACCOUNT_ID}.dkr.ecr.${env.AWS_REGION}.amazonaws.com"
+                    env.IMAGE_TAG = "${env.BUILD_NUMBER}-${env.CURRENT_COMMIT.take(7)}"
+                    env.ECR_REGISTRY = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${env.AWS_REGION}.amazonaws.com"
 
                     echo "Current commit: ${env.CURRENT_COMMIT}"
                     echo "Previous commit: ${env.PREVIOUS_COMMIT ?: 'none'}"
@@ -106,15 +101,12 @@ pipeline {
                             script: "git diff --name-only '${env.PREVIOUS_COMMIT}' '${env.CURRENT_COMMIT}'",
                             returnStdout: true
                         ).trim()
-
                         changedFiles = output ? output.readLines() : []
                     } else {
-                        // First build: build each existing service.
                         def output = sh(
                             script: 'git ls-files',
                             returnStdout: true
                         ).trim()
-
                         changedFiles = output ? output.readLines() : []
                     }
 
@@ -127,7 +119,6 @@ pipeline {
                         }
                     }
 
-                    // Shared build files affect every service.
                     def sharedChanged = changedFiles.any { file ->
                         file == 'pom.xml' ||
                         file == 'mvnw' ||
@@ -140,8 +131,7 @@ pipeline {
                         selected = services.findAll { service ->
                             fileExists("services/${service}")
                         }
-
-                        echo 'Shared build configuration changed; selecting all services.'
+                        echo 'Shared build configuration changed; selecting all existing services.'
                     }
 
                     env.BUILD_SERVICES = selected.join(',')
@@ -157,29 +147,26 @@ pipeline {
 
         stage('Validate Tools and AWS Identity') {
             when {
-                expression {
-                    return !!env.BUILD_SERVICES?.trim()
-                }
+                expression { return !!env.BUILD_SERVICES?.trim() }
             }
             steps {
                 sh '''
                     set -eu
-
                     command -v java
                     command -v mvn
                     command -v docker
                     command -v aws
+                    command -v kubectl
 
                     java -version
                     mvn -version
                     docker --version
                     aws --version
+                    kubectl version --client
 
-                    ACTUAL_ACCOUNT=$(aws sts get-caller-identity \
-                        --query Account --output text)
-
+                    ACTUAL_ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
                     if [ "$ACTUAL_ACCOUNT" != "$AWS_ACCOUNT_ID" ]; then
-                        echo "ERROR: Unexpected AWS account: $ACTUAL_ACCOUNT"
+                        echo "ERROR: Expected AWS account $AWS_ACCOUNT_ID but got $ACTUAL_ACCOUNT"
                         exit 1
                     fi
 
@@ -190,18 +177,14 @@ pipeline {
 
         stage('Verify Existing ECR Repository') {
             when {
-                expression {
-                    return !!env.BUILD_SERVICES?.trim()
-                }
+                expression { return !!env.BUILD_SERVICES?.trim() }
             }
             steps {
                 sh '''
                     set -eu
-
                     aws ecr describe-repositories \
                         --repository-names "$ECR_REPOSITORY" \
                         --region "$AWS_REGION"
-
                     echo "Verified existing ECR repository."
                 '''
             }
@@ -209,27 +192,20 @@ pipeline {
 
         stage('Build Changed Services') {
             when {
-                expression {
-                    return !!env.BUILD_SERVICES?.trim()
-                }
+                expression { return !!env.BUILD_SERVICES?.trim() }
             }
             steps {
                 script {
-                    def selected =
-                        env.BUILD_SERVICES.split(',').findAll { it }
-
+                    def selected = env.BUILD_SERVICES.split(',').findAll { it.trim() }
                     def tasks = [:]
 
                     selected.each { serviceName ->
                         def service = serviceName.trim()
-
                         tasks[service] = {
                             dir("services/${service}") {
                                 echo "Building ${service}"
-
                                 sh '''
                                     set -eu
-
                                     if [ -f ./mvnw ]; then
                                         chmod +x ./mvnw
                                         ./mvnw -B -DskipTests package
@@ -240,7 +216,6 @@ pipeline {
                             }
                         }
                     }
-
                     parallel tasks
                 }
             }
@@ -248,28 +223,22 @@ pipeline {
 
         stage('Test Changed Services') {
             when {
-                expression {
-                    return !!env.BUILD_SERVICES?.trim()
-                }
+                expression { return !!env.BUILD_SERVICES?.trim() }
             }
             steps {
                 script {
-                    def selected =
-                        env.BUILD_SERVICES.split(',').findAll { it }
-
+                    def selected = env.BUILD_SERVICES.split(',').findAll { it.trim() }
                     def tasks = [:]
 
                     selected.each { serviceName ->
                         def service = serviceName.trim()
-
                         tasks[service] = {
                             dir("services/${service}") {
                                 echo "Testing ${service}"
-
                                 sh '''
                                     set -eu
-
                                     if [ -f ./mvnw ]; then
+                                        chmod +x ./mvnw
                                         ./mvnw -B test
                                     else
                                         mvn -B test
@@ -278,7 +247,6 @@ pipeline {
                             }
                         }
                     }
-
                     parallel tasks
                 }
             }
@@ -286,72 +254,59 @@ pipeline {
 
         stage('Login to Existing ECR') {
             when {
-                expression {
-                    return !!env.BUILD_SERVICES?.trim()
-                }
+                expression { return !!env.BUILD_SERVICES?.trim() }
             }
             steps {
                 sh '''
                     set -eu
-
-                    aws ecr get-login-password \
-                        --region "$AWS_REGION" |
-                    docker login \
-                        --username AWS \
-                        --password-stdin "$ECR_REGISTRY"
+                    aws ecr get-login-password --region "$AWS_REGION" |
+                        docker login --username AWS --password-stdin "$ECR_REGISTRY"
                 '''
             }
         }
 
         stage('Build and Push Changed Service Images') {
             when {
-                expression {
-                    return !!env.BUILD_SERVICES?.trim()
-                }
+                expression { return !!env.BUILD_SERVICES?.trim() }
             }
             steps {
                 script {
-                    def selected =
-                        env.BUILD_SERVICES.split(',').findAll { it }
-
+                    def selected = env.BUILD_SERVICES.split(',').findAll { it.trim() }
                     def tasks = [:]
 
                     selected.each { serviceName ->
                         def service = serviceName.trim()
-
                         tasks[service] = {
                             withEnv(["SERVICE_NAME=${service}"]) {
                                 sh '''
                                     set -eu
-
                                     SERVICE_DIR="services/$SERVICE_NAME"
                                     IMAGE="$ECR_REGISTRY/$ECR_REPOSITORY"
 
-                                    echo "Building image for $SERVICE_NAME"
+                                    if [ ! -d "$SERVICE_DIR/target" ]; then
+                                        echo "ERROR: Build output directory missing for $SERVICE_NAME"
+                                        exit 1
+                                    fi
 
-                                    if [ ! -d "$SERVICE_DIR/target" ] ||
-                                       ! find "$SERVICE_DIR/target" \
-                                           -maxdepth 1 -type f \
-                                           -name '*.jar' \
-                                           ! -name '*.original' | grep -q .; then
+                                    JAR=$(find "$SERVICE_DIR/target" -maxdepth 1 -type f \
+                                        -name '*.jar' ! -name '*.original' -print -quit)
+                                    if [ -z "$JAR" ]; then
                                         echo "ERROR: No packaged JAR found for $SERVICE_NAME"
                                         exit 1
                                     fi
 
-                                    if [ -f "$DOCKERFILE" ]; then
-                                        BUILD_FILE="$DOCKERFILE"
-                                    elif [ -f "$SERVICE_DIR/Dockerfile" ]; then
-                                        BUILD_FILE="$SERVICE_DIR/Dockerfile"
-                                    else
-                                        echo "ERROR: Dockerfile not found"
+                                    if [ ! -f "$DOCKERFILE" ]; then
+                                        echo "ERROR: Dockerfile not found: $DOCKERFILE"
                                         exit 1
                                     fi
 
                                     VERSIONED_IMAGE="$IMAGE:$SERVICE_NAME-$IMAGE_TAG"
                                     LATEST_IMAGE="$IMAGE:$SERVICE_NAME-latest"
 
+                                    # Use the service directory as context so target/*.jar
+                                    # can be copied by the Dockerfile.
                                     docker build --pull \
-                                        -f "$BUILD_FILE" \
+                                        -f "$DOCKERFILE" \
                                         -t "$VERSIONED_IMAGE" \
                                         -t "$LATEST_IMAGE" \
                                         "$SERVICE_DIR"
@@ -359,16 +314,94 @@ pipeline {
                                     docker push "$VERSIONED_IMAGE"
                                     docker push "$LATEST_IMAGE"
 
-                                    echo "Successfully pushed:"
-                                    echo "$VERSIONED_IMAGE"
-                                    echo "$LATEST_IMAGE"
+                                    echo "Pushed $VERSIONED_IMAGE"
                                 '''
                             }
                         }
                     }
-
                     parallel tasks
                 }
+            }
+        }
+
+        stage('Configure EKS Access') {
+            when {
+                expression { return !!env.BUILD_SERVICES?.trim() }
+            }
+            steps {
+                sh '''
+                    set -eu
+                    aws eks describe-cluster --name "$EKS_CLUSTER" --region "$AWS_REGION"
+                    aws eks update-kubeconfig --region "$AWS_REGION" --name "$EKS_CLUSTER"
+                    kubectl cluster-info
+                    kubectl get namespace "$K8S_NAMESPACE"
+                '''
+            }
+        }
+
+        stage('Deploy Changed Services to EKS') {
+            when {
+                expression { return !!env.BUILD_SERVICES?.trim() }
+            }
+            steps {
+                script {
+                    def selected = env.BUILD_SERVICES.split(',').findAll { it.trim() }
+                    def tasks = [:]
+
+                    selected.each { serviceName ->
+                        def service = serviceName.trim()
+                        tasks[service] = {
+                            withEnv(["SERVICE_NAME=${service}"]) {
+                                sh '''
+                                    set -eu
+                                    DEPLOYMENT="deployment/$SERVICE_NAME"
+                                    IMAGE="$ECR_REGISTRY/$ECR_REPOSITORY:$SERVICE_NAME-$IMAGE_TAG"
+
+                                    kubectl get "$DEPLOYMENT" -n "$K8S_NAMESPACE"
+
+                                    # Assumes Kubernetes container name equals service name.
+                                    kubectl set image "$DEPLOYMENT" \
+                                        "$SERVICE_NAME=$IMAGE" \
+                                        -n "$K8S_NAMESPACE"
+
+                                    if ! kubectl rollout status "$DEPLOYMENT" \
+                                        -n "$K8S_NAMESPACE" --timeout=5m; then
+                                        echo "Rollout failed for $SERVICE_NAME; attempting rollback."
+                                        kubectl rollout undo "$DEPLOYMENT" -n "$K8S_NAMESPACE"
+                                        kubectl rollout status "$DEPLOYMENT" \
+                                            -n "$K8S_NAMESPACE" --timeout=5m || true
+                                        exit 1
+                                    fi
+
+                                    echo "Deployment successful: $SERVICE_NAME"
+                                '''
+                            }
+                        }
+                    }
+                    parallel tasks
+                }
+            }
+        }
+
+        stage('Verify Kubernetes Deployment') {
+            when {
+                expression { return !!env.BUILD_SERVICES?.trim() }
+            }
+            steps {
+                sh '''
+                    set -eu
+                    echo "Deployment status:"
+                    kubectl get deployments -n "$K8S_NAMESPACE"
+                    echo "Pod status:"
+                    kubectl get pods -n "$K8S_NAMESPACE"
+                    echo "Service status:"
+                    kubectl get services -n "$K8S_NAMESPACE"
+
+                    for service in $(echo "$BUILD_SERVICES" | tr ',' ' '); do
+                        kubectl rollout status "deployment/$service" \
+                            -n "$K8S_NAMESPACE" --timeout=5m
+                    done
+                '''
             }
         }
     }
@@ -376,14 +409,12 @@ pipeline {
     post {
         success {
             echo 'Pipeline completed successfully.'
-            echo "Services built: ${env.BUILD_SERVICES ?: 'none'}"
+            echo "Services built/deployed: ${env.BUILD_SERVICES ?: 'none'}"
             echo "Commit: ${env.CURRENT_COMMIT ?: 'unknown'}"
         }
-
         failure {
-            echo 'Pipeline failed. Check the stage logs.'
+            echo 'Pipeline failed. Check the first failed stage and its console logs.'
         }
-
         always {
             echo 'Pipeline finished.'
         }
