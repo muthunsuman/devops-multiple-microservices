@@ -17,7 +17,7 @@ pipeline {
         GIT_BRANCH     = 'main'
 
         // Verify these values against your actual AWS resources.
-        AWS_REGION     = 'ap-south-1'
+        AWS_REGION     = 'ap-southeast-2'
         AWS_ACCOUNT_ID = '028610956643'
         EKS_CLUSTER    = 'devops-eks-cluster'
         K8S_NAMESPACE  = 'dev'
