@@ -1,3 +1,4 @@
+
 pipeline {
     agent any
 
@@ -15,13 +16,11 @@ pipeline {
     environment {
         GIT_REPO       = 'https://github.com/muthunsuman/devops-multiple-microservices.git'
         GIT_BRANCH     = 'main'
-
         // Verify these values against your actual AWS resources.
         AWS_REGION     = 'ap-southeast-2'
         AWS_ACCOUNT_ID = '028610956643'
         EKS_CLUSTER    = 'devops-eks-cluster'
         K8S_NAMESPACE  = 'dev'
-
         ECR_REPOSITORY = 'devopsmultiplemicroservice'
         DOCKERFILE     = 'docker/Dockerfile'
     }
@@ -30,6 +29,7 @@ pipeline {
         stage('Checkout Source Code') {
             steps {
                 deleteDir()
+
                 git branch: "${GIT_BRANCH}", url: "${GIT_REPO}"
 
                 script {
@@ -101,12 +101,14 @@ pipeline {
                             script: "git diff --name-only '${env.PREVIOUS_COMMIT}' '${env.CURRENT_COMMIT}'",
                             returnStdout: true
                         ).trim()
+
                         changedFiles = output ? output.readLines() : []
                     } else {
                         def output = sh(
                             script: 'git ls-files',
                             returnStdout: true
                         ).trim()
+
                         changedFiles = output ? output.readLines() : []
                     }
 
@@ -131,6 +133,7 @@ pipeline {
                         selected = services.findAll { service ->
                             fileExists("services/${service}")
                         }
+
                         echo 'Shared build configuration changed; selecting all existing services.'
                     }
 
@@ -152,6 +155,7 @@ pipeline {
             steps {
                 sh '''
                     set -eu
+
                     command -v java
                     command -v mvn
                     command -v docker
@@ -165,6 +169,7 @@ pipeline {
                     kubectl version --client
 
                     ACTUAL_ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+
                     if [ "$ACTUAL_ACCOUNT" != "$AWS_ACCOUNT_ID" ]; then
                         echo "ERROR: Expected AWS account $AWS_ACCOUNT_ID but got $ACTUAL_ACCOUNT"
                         exit 1
@@ -182,9 +187,11 @@ pipeline {
             steps {
                 sh '''
                     set -eu
+
                     aws ecr describe-repositories \
                         --repository-names "$ECR_REPOSITORY" \
                         --region "$AWS_REGION"
+
                     echo "Verified existing ECR repository."
                 '''
             }
@@ -201,11 +208,14 @@ pipeline {
 
                     selected.each { serviceName ->
                         def service = serviceName.trim()
+
                         tasks[service] = {
                             dir("services/${service}") {
                                 echo "Building ${service}"
+
                                 sh '''
                                     set -eu
+
                                     if [ -f ./mvnw ]; then
                                         chmod +x ./mvnw
                                         ./mvnw -B -DskipTests package
@@ -216,6 +226,7 @@ pipeline {
                             }
                         }
                     }
+
                     parallel tasks
                 }
             }
@@ -232,11 +243,14 @@ pipeline {
 
                     selected.each { serviceName ->
                         def service = serviceName.trim()
+
                         tasks[service] = {
                             dir("services/${service}") {
                                 echo "Testing ${service}"
+
                                 sh '''
                                     set -eu
+
                                     if [ -f ./mvnw ]; then
                                         chmod +x ./mvnw
                                         ./mvnw -B test
@@ -247,6 +261,7 @@ pipeline {
                             }
                         }
                     }
+
                     parallel tasks
                 }
             }
@@ -259,6 +274,7 @@ pipeline {
             steps {
                 sh '''
                     set -eu
+
                     aws ecr get-login-password --region "$AWS_REGION" |
                         docker login --username AWS --password-stdin "$ECR_REGISTRY"
                 '''
@@ -276,10 +292,12 @@ pipeline {
 
                     selected.each { serviceName ->
                         def service = serviceName.trim()
+
                         tasks[service] = {
                             withEnv(["SERVICE_NAME=${service}"]) {
                                 sh '''
                                     set -eu
+
                                     SERVICE_DIR="services/$SERVICE_NAME"
                                     IMAGE="$ECR_REGISTRY/$ECR_REPOSITORY"
 
@@ -290,6 +308,7 @@ pipeline {
 
                                     JAR=$(find "$SERVICE_DIR/target" -maxdepth 1 -type f \
                                         -name '*.jar' ! -name '*.original' -print -quit)
+
                                     if [ -z "$JAR" ]; then
                                         echo "ERROR: No packaged JAR found for $SERVICE_NAME"
                                         exit 1
@@ -300,25 +319,24 @@ pipeline {
                                         exit 1
                                     fi
 
+                                    # Use a unique versioned tag because ECR tags are immutable.
                                     VERSIONED_IMAGE="$IMAGE:$SERVICE_NAME-$IMAGE_TAG"
-                                    LATEST_IMAGE="$IMAGE:$SERVICE_NAME-latest"
 
-                                    # Use the service directory as context so target/*.jar
+                                    # Use the service directory as the build context so target/*.jar
                                     # can be copied by the Dockerfile.
                                     docker build --pull \
                                         -f "$DOCKERFILE" \
                                         -t "$VERSIONED_IMAGE" \
-                                        -t "$LATEST_IMAGE" \
                                         "$SERVICE_DIR"
 
                                     docker push "$VERSIONED_IMAGE"
-                                    docker push "$LATEST_IMAGE"
 
                                     echo "Pushed $VERSIONED_IMAGE"
                                 '''
                             }
                         }
                     }
+
                     parallel tasks
                 }
             }
@@ -331,8 +349,15 @@ pipeline {
             steps {
                 sh '''
                     set -eu
-                    aws eks describe-cluster --name "$EKS_CLUSTER" --region "$AWS_REGION"
-                    aws eks update-kubeconfig --region "$AWS_REGION" --name "$EKS_CLUSTER"
+
+                    aws eks describe-cluster \
+                        --name "$EKS_CLUSTER" \
+                        --region "$AWS_REGION"
+
+                    aws eks update-kubeconfig \
+                        --region "$AWS_REGION" \
+                        --name "$EKS_CLUSTER"
+
                     kubectl cluster-info
                     kubectl get namespace "$K8S_NAMESPACE"
                 '''
@@ -350,10 +375,12 @@ pipeline {
 
                     selected.each { serviceName ->
                         def service = serviceName.trim()
+
                         tasks[service] = {
                             withEnv(["SERVICE_NAME=${service}"]) {
                                 sh '''
                                     set -eu
+
                                     DEPLOYMENT="deployment/$SERVICE_NAME"
                                     IMAGE="$ECR_REGISTRY/$ECR_REPOSITORY:$SERVICE_NAME-$IMAGE_TAG"
 
@@ -366,10 +393,15 @@ pipeline {
 
                                     if ! kubectl rollout status "$DEPLOYMENT" \
                                         -n "$K8S_NAMESPACE" --timeout=5m; then
+
                                         echo "Rollout failed for $SERVICE_NAME; attempting rollback."
-                                        kubectl rollout undo "$DEPLOYMENT" -n "$K8S_NAMESPACE"
+
+                                        kubectl rollout undo "$DEPLOYMENT" \
+                                            -n "$K8S_NAMESPACE"
+
                                         kubectl rollout status "$DEPLOYMENT" \
                                             -n "$K8S_NAMESPACE" --timeout=5m || true
+
                                         exit 1
                                     fi
 
@@ -378,6 +410,7 @@ pipeline {
                             }
                         }
                     }
+
                     parallel tasks
                 }
             }
@@ -390,10 +423,13 @@ pipeline {
             steps {
                 sh '''
                     set -eu
+
                     echo "Deployment status:"
                     kubectl get deployments -n "$K8S_NAMESPACE"
+
                     echo "Pod status:"
                     kubectl get pods -n "$K8S_NAMESPACE"
+
                     echo "Service status:"
                     kubectl get services -n "$K8S_NAMESPACE"
 
@@ -412,9 +448,11 @@ pipeline {
             echo "Services built/deployed: ${env.BUILD_SERVICES ?: 'none'}"
             echo "Commit: ${env.CURRENT_COMMIT ?: 'unknown'}"
         }
+
         failure {
             echo 'Pipeline failed. Check the first failed stage and its console logs.'
         }
+
         always {
             echo 'Pipeline finished.'
         }
