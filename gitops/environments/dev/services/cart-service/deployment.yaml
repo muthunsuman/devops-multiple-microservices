@@ -18,8 +18,8 @@ spec:
     spec:
       containers:
         - name: cart-service
-          image: 028610956643.dkr.ecr.ap-southeast-2.amazonaws.com/devopsmultiplemicroservice/cart-service:latest
-          imagePullPolicy: IfNotPresent
+          image: 028610956643.dkr.ecr.ap-southeast-2.amazonaws.com/devopsmultiplemicroservice:cart-service-latest
+          imagePullPolicy: Always
           ports:
             - name: http
               containerPort: 8080

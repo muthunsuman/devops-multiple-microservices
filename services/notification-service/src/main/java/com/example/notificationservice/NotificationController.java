@@ -21,7 +21,7 @@ public class NotificationController {
   @GetMapping("/{id}")
   public Map<String,Object> get(@PathVariable String id) {
     Map<String,Object> item = data.get(id);
-    if (item == null) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Record ndots found");
+    if (item == null) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Record nots found");
     return item;
   }
 
