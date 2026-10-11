@@ -1,3 +1,4 @@
+
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
@@ -25,3 +26,35 @@ resources:
   - services/shipping-service/service.yaml
   - services/user-service/deployment.yaml
   - services/user-service/service.yaml
+
+images:
+  - name: 028610956643.dkr.ecr.ap-south-1.amazonaws.com/api-gateway
+    newName: 028610956643.dkr.ecr.ap-southeast-2.amazonaws.com/devopsmultiplemicroservice
+    newTag: api-gateway-15-b6c9907
+  - name: 028610956643.dkr.ecr.ap-south-1.amazonaws.com/auth-service
+    newName: 028610956643.dkr.ecr.ap-southeast-2.amazonaws.com/devopsmultiplemicroservice
+    newTag: auth-service-15-b6c9907
+  - name: 028610956643.dkr.ecr.ap-south-1.amazonaws.com/cart-service
+    newName: 028610956643.dkr.ecr.ap-southeast-2.amazonaws.com/devopsmultiplemicroservice
+    newTag: cart-service-15-b6c9907
+  - name: 028610956643.dkr.ecr.ap-south-1.amazonaws.com/inventory-service
+    newName: 028610956643.dkr.ecr.ap-southeast-2.amazonaws.com/devopsmultiplemicroservice
+    newTag: inventory-service-15-b6c9907
+  - name: 028610956643.dkr.ecr.ap-south-1.amazonaws.com/notification-service
+    newName: 028610956643.dkr.ecr.ap-southeast-2.amazonaws.com/devopsmultiplemicroservice
+    newTag: notification-service-15-b6c9907
+  - name: 028610956643.dkr.ecr.ap-south-1.amazonaws.com/order-service
+    newName: 028610956643.dkr.ecr.ap-southeast-2.amazonaws.com/devopsmultiplemicroservice
+    newTag: order-service-15-b6c9907
+  - name: 028610956643.dkr.ecr.ap-south-1.amazonaws.com/payment-service
+    newName: 028610956643.dkr.ecr.ap-southeast-2.amazonaws.com/devopsmultiplemicroservice
+    newTag: payment-service-15-b6c9907
+  - name: 028610956643.dkr.ecr.ap-south-1.amazonaws.com/product-service
+    newName: 028610956643.dkr.ecr.ap-southeast-2.amazonaws.com/devopsmultiplemicroservice
+    newTag: product-service-15-b6c9907
+  - name: 028610956643.dkr.ecr.ap-south-1.amazonaws.com/shipping-service
+    newName: 028610956643.dkr.ecr.ap-southeast-2.amazonaws.com/devopsmultiplemicroservice
+    newTag: shipping-service-15-b6c9907
+  - name: 028610956643.dkr.ecr.ap-south-1.amazonaws.com/user-service
+    newName: 028610956643.dkr.ecr.ap-southeast-2.amazonaws.com/devopsmultiplemicroservice
+    newTag: user-service-15-b6c9907
