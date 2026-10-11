@@ -22,7 +22,7 @@ spec:
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
-              containerPort: 8085
+              containerPort: 8080
           env:
             - name: SPRING_PROFILES_ACTIVE
               value: staging
@@ -35,11 +35,11 @@ spec:
               memory: "512Mi"
           readinessProbe:
             tcpSocket:
-              port: 8085
+              port: 8080
             initialDelaySeconds: 30
             periodSeconds: 10
           livenessProbe:
             tcpSocket:
-              port: 8085
+              port: 8080
             initialDelaySeconds: 60
             periodSeconds: 20
