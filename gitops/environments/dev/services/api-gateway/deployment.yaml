@@ -18,7 +18,7 @@ spec:
     spec:
       containers:
         - name: api-gateway
-          image: 028610956643.dkr.ecr.ap-south-1.amazonaws.com/api-gateway:latest
+          image: 028610956643.dkr.ecr.ap-southeast-2.amazonaws.com/devopsmultiplemicroservice/api-gateway:latest
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

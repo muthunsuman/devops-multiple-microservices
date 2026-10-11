@@ -18,7 +18,7 @@ spec:
     spec:
       containers:
         - name: user-service
-          image: 028610956643.dkr.ecr.ap-south-1.amazonaws.com/user-service:latest
+          image: 028610956643.dkr.ecr.ap-southeast-2.amazonaws.com/devopsmultiplemicroservice/user-service:latest
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

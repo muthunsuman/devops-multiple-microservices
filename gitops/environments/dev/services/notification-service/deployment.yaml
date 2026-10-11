@@ -18,7 +18,7 @@ spec:
     spec:
       containers:
         - name: notification-service
-          image: 028610956643.dkr.ecr.ap-south-1.amazonaws.com/notification-service:latest
+          image: 028610956643.dkr.ecr.ap-southeast-2.amazonaws.com/devopsmultiplemicroservice/notification-service:latest
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
