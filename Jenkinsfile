@@ -25,6 +25,9 @@ pipeline {
 
         ECR_REPOSITORY = 'devopsmultiplemicroservice'
         DOCKERFILE     = 'docker/Dockerfile'
+
+        SONAR_HOST_URL = 'http://YOUR_SONARQUBE_HOST:9000'
+        SONAR_CREDENTIALS_ID = 'sonarqube-token'
     }
 
     stages {
@@ -88,7 +91,6 @@ pipeline {
 
                         changedFiles = output ? output.readLines() : []
                     } else {
-                        // First commit: select all available services.
                         changedFiles = services.collectMany { service ->
                             def output = sh(
                                 script: "git ls-files 'services/${service}/'",
@@ -128,13 +130,13 @@ pipeline {
                     echo "Services selected: ${env.BUILD_SERVICES ?: 'none'}"
 
                     if (!env.BUILD_SERVICES) {
-                        echo 'No service source changes detected. Build and deployment stages will be skipped.'
+                        echo 'No service source changes detected.'
                     }
                 }
             }
         }
 
-        stage('Validate Tools and AWS') {
+        stage('Validate Tools') {
             when {
                 expression { return !!env.BUILD_SERVICES?.trim() }
             }
@@ -146,13 +148,11 @@ pipeline {
                     command -v mvn
                     command -v docker
                     command -v aws
-                    command -v kubectl
 
                     java -version
                     mvn -version
                     docker --version
                     aws --version
-                    kubectl version --client
 
                     ACTUAL_ACCOUNT=$(aws sts get-caller-identity \
                         --query Account --output text)
@@ -162,47 +162,12 @@ pipeline {
                         exit 1
                     fi
 
-                    echo "AWS account verified."
+                    echo "Tools and AWS account verified."
                 '''
             }
         }
 
-        stage('Ensure ECR Repository') {
-            when {
-                expression { return !!env.BUILD_SERVICES?.trim() }
-            }
-            steps {
-                sh '''
-                    set -eu
-
-                    if ! aws ecr describe-repositories \
-                        --repository-names "$ECR_REPOSITORY" \
-                        --region "$AWS_REGION" >/dev/null 2>&1; then
-
-                        echo "Creating ECR repository: $ECR_REPOSITORY"
-
-                        aws ecr create-repository \
-                            --repository-name "$ECR_REPOSITORY" \
-                            --image-tag-mutability MUTABLE \
-                            --region "$AWS_REGION"
-                    else
-                        echo "ECR repository already exists."
-
-                        aws ecr put-image-tag-mutability \
-                            --repository-name "$ECR_REPOSITORY" \
-                            --image-tag-mutability MUTABLE \
-                            --region "$AWS_REGION" >/dev/null
-                    fi
-
-                    aws ecr get-login-password --region "$AWS_REGION" |
-                        docker login \
-                            --username AWS \
-                            --password-stdin "$ECR_REGISTRY"
-                '''
-            }
-        }
-
-        stage('Build and Test') {
+        stage('Build and Test (Maven)') {
             when {
                 expression { return !!env.BUILD_SERVICES?.trim() }
             }
@@ -234,7 +199,100 @@ pipeline {
             }
         }
 
-        stage('Build and Push Images') {
+        stage('SonarQube Analysis') {
+            when {
+                expression { return !!env.BUILD_SERVICES?.trim() }
+            }
+            steps {
+                script {
+                    def tasks = [:]
+
+                    env.BUILD_SERVICES.split(',').each { serviceName ->
+                        def service = serviceName.trim()
+
+                        tasks[service] = {
+                            withEnv(["SERVICE_NAME=${service}"]) {
+                                dir("services/${service}") {
+                                    withCredentials([
+                                        string(
+                                            credentialsId: "${SONAR_CREDENTIALS_ID}",
+                                            variable: 'SONAR_TOKEN'
+                                        )
+                                    ]) {
+                                        sh '''
+                                            set -eu
+
+                                            mvn -B sonar:sonar \
+                                                -Dsonar.host.url="$SONAR_HOST_URL" \
+                                                -Dsonar.token="$SONAR_TOKEN" \
+                                                -Dsonar.projectKey="devops-$SERVICE_NAME" \
+                                                -Dsonar.projectName="$SERVICE_NAME"
+                                        '''
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    parallel tasks
+                }
+            }
+        }
+
+        stage('SonarQube Quality Gate') {
+            when {
+                expression { return !!env.BUILD_SERVICES?.trim() }
+            }
+            steps {
+                script {
+                    def tasks = [:]
+
+                    env.BUILD_SERVICES.split(',').each { serviceName ->
+                        def service = serviceName.trim()
+
+                        tasks[service] = {
+                            withEnv(["SERVICE_NAME=${service}"]) {
+                                dir("services/${service}") {
+                                    timeout(time: 10, unit: 'MINUTES') {
+                                        waitForQualityGate abortPipeline: true
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    parallel tasks
+                }
+            }
+        }
+
+        stage('Ensure ECR Repository') {
+            when {
+                expression { return !!env.BUILD_SERVICES?.trim() }
+            }
+            steps {
+                sh '''
+                    set -eu
+
+                    if ! aws ecr describe-repositories \
+                        --repository-names "$ECR_REPOSITORY" \
+                        --region "$AWS_REGION" >/dev/null 2>&1; then
+
+                        aws ecr create-repository \
+                            --repository-name "$ECR_REPOSITORY" \
+                            --image-tag-mutability MUTABLE \
+                            --region "$AWS_REGION"
+                    fi
+
+                    aws ecr get-login-password --region "$AWS_REGION" |
+                        docker login \
+                            --username AWS \
+                            --password-stdin "$ECR_REGISTRY"
+                '''
+            }
+        }
+
+        stage('Build and Push Docker Images to ECR') {
             when {
                 expression { return !!env.BUILD_SERVICES?.trim() }
             }
@@ -277,8 +335,6 @@ pipeline {
                                         exit 1
                                     }
 
-                                    echo "Building $VERSIONED_IMAGE"
-
                                     docker build --pull \
                                         -f "$DOCKERFILE" \
                                         -t "$VERSIONED_IMAGE" \
@@ -288,8 +344,7 @@ pipeline {
                                     docker push "$VERSIONED_IMAGE"
                                     docker push "$LATEST_IMAGE"
 
-                                    echo "Versioned image: $VERSIONED_IMAGE"
-                                    echo "Latest service tag: $LATEST_IMAGE"
+                                    echo "Pushed $VERSIONED_IMAGE"
                                 '''
                             }
                         }
@@ -307,6 +362,8 @@ pipeline {
             steps {
                 sh '''
                     set -eu
+
+                    command -v kubectl
 
                     aws eks describe-cluster \
                         --name "$EKS_CLUSTER" \
@@ -349,15 +406,12 @@ pipeline {
 
                                         MANIFEST="gitops/environments/dev/services/$SERVICE_NAME/deployment.yaml"
 
-                                        if [ ! -f "$MANIFEST" ]; then
+                                        test -f "$MANIFEST" || {
                                             echo "ERROR: Deployment and manifest missing for $SERVICE_NAME"
                                             exit 1
-                                        fi
+                                        }
 
-                                        echo "Creating deployment from $MANIFEST"
-
-                                        kubectl apply -f "$MANIFEST" \
-                                            -n "$K8S_NAMESPACE"
+                                        kubectl apply -f "$MANIFEST" -n "$K8S_NAMESPACE"
                                     fi
 
                                     CONTAINERS=$(kubectl get "$DEPLOYMENT" \
@@ -372,17 +426,12 @@ pipeline {
                                             ;;
                                     esac
 
-                                    echo "Deploying $IMAGE"
-
                                     kubectl set image "$DEPLOYMENT" \
                                         "$SERVICE_NAME=$IMAGE" \
                                         -n "$K8S_NAMESPACE"
 
                                     if ! kubectl rollout status "$DEPLOYMENT" \
-                                        -n "$K8S_NAMESPACE" \
-                                        --timeout=5m; then
-
-                                        echo "Rollout failed. Attempting rollback."
+                                        -n "$K8S_NAMESPACE" --timeout=5m; then
 
                                         kubectl rollout undo "$DEPLOYMENT" \
                                             -n "$K8S_NAMESPACE" || true
@@ -425,8 +474,6 @@ pipeline {
 
                     kubectl get pods -n "$K8S_NAMESPACE" -o wide
                     kubectl get services -n "$K8S_NAMESPACE"
-
-                    echo "All selected deployments verified."
                 '''
             }
         }
