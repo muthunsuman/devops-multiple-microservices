@@ -75,18 +75,19 @@ object BuildAndDeploy : BuildType({
                 commandArgs = "--pull"
             }
         }
-        dockerCommand {
-            name = "docker image build (1)"
+        script {
+            name = "login AWS ECR for image push"
             id = "docker_image_build_1"
-            commandType = build {
-                source = file {
-                    path = "services/api-gateway/Dockerfile"
-                }
-                contextDir = "services/api-gateway"
-                platform = DockerCommandStep.ImagePlatform.Linux
-                namesAndTags = "028610956643.dkr.ecr.ap-southeast-2.amazonaws.com/devopsmultiplemicroservice"
-                commandArgs = "--pull"
-            }
+            scriptContent = """
+                set -eu
+                
+                aws --version
+                
+                aws ecr get-login-password --region ap-southeast-2 \
+                  | docker login \
+                      --username AWS \
+                      --password-stdin 028610956643.dkr.ecr.ap-southeast-2.amazonaws.com
+            """.trimIndent()
         }
         dockerCommand {
             name = "docker imahe push"
