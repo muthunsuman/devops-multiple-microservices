@@ -21,7 +21,7 @@ public class CartController {
   @GetMapping("/{id}")
   public Map<String,Object> get(@PathVariable String id) {
     Map<String,Object> item = data.get(id);
-    if (item == null) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Recordsgg dnots found");
+    if (item == null) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Records dnots found");
     return item;
   }
 
