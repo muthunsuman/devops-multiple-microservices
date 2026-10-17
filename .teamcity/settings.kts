@@ -3,6 +3,7 @@ import jetbrains.buildServer.configs.kotlin.buildFeatures.notifications
 import jetbrains.buildServer.configs.kotlin.buildSteps.DockerCommandStep
 import jetbrains.buildServer.configs.kotlin.buildSteps.dockerCommand
 import jetbrains.buildServer.configs.kotlin.buildSteps.maven
+import jetbrains.buildServer.configs.kotlin.buildSteps.script
 import jetbrains.buildServer.configs.kotlin.pipelines.*
 import jetbrains.buildServer.configs.kotlin.triggers.gitHubChecks
 import jetbrains.buildServer.configs.kotlin.triggers.vcs
@@ -81,6 +82,20 @@ object BuildAndDeploy : BuildType({
                 namesAndTags = "028610956643.dkr.ecr.ap-southeast-2.amazonaws.com/devopsmultiplemicroservice"
                 removeImageAfterPush = false
             }
+        }
+        script {
+            name = "Login to Amazon ECR."
+            id = "Login_to_Amazon_ECR"
+            scriptContent = """
+                set -eu
+                
+                aws --version
+                
+                aws ecr get-login-password --region ap-southeast-2 \
+                  | docker login \
+                      --username AWS \
+                      --password-stdin 028610956643.dkr.ecr.ap-southeast-2.amazonaws.com
+            """.trimIndent()
         }
     }
 
