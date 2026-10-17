@@ -100,6 +100,7 @@ object BuildAndDeploy : BuildType({
         script {
             name = "Login to Amazon ECR."
             id = "Login_to_Amazon_ECR"
+            enabled = false
             scriptContent = """
                 set -eu
                 
