@@ -4,7 +4,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 @RestController
 public class GatewayController {
-	public int a=122;
+	public int a=1227;
   @GetMapping("/api/health")
   public Map<String,String> health() { return Map.of("service","api-gateway","status","UP");
   
