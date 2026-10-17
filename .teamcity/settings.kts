@@ -70,6 +70,7 @@ object BuildAndDeploy : BuildType({
                 }
                 contextDir = "services/api-gateway"
                 platform = DockerCommandStep.ImagePlatform.Linux
+                namesAndTags = "028610956643.dkr.ecr.ap-southeast-2.amazonaws.com/devopsmultiplemicroservice"
                 commandArgs = "--pull"
             }
         }
