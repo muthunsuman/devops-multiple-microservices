@@ -79,6 +79,7 @@ object BuildAndDeploy : BuildType({
             id = "docker_imahe_push"
             commandType = push {
                 namesAndTags = "028610956643.dkr.ecr.ap-southeast-2.amazonaws.com/devopsmultiplemicroservice"
+                removeImageAfterPush = false
             }
         }
     }
