@@ -58,7 +58,7 @@ object BuildAndDeploy : BuildType({
         maven {
             name = "mvn test"
             id = "mvn_test"
-            goals = "mvn test"
+            goals = "test"
             pomLocation = "services/api-gateway/pom.xml"
         }
         dockerCommand {
