@@ -76,6 +76,19 @@ object BuildAndDeploy : BuildType({
             }
         }
         dockerCommand {
+            name = "docker image build (1)"
+            id = "docker_image_build_1"
+            commandType = build {
+                source = file {
+                    path = "services/api-gateway/Dockerfile"
+                }
+                contextDir = "services/api-gateway"
+                platform = DockerCommandStep.ImagePlatform.Linux
+                namesAndTags = "028610956643.dkr.ecr.ap-southeast-2.amazonaws.com/devopsmultiplemicroservice"
+                commandArgs = "--pull"
+            }
+        }
+        dockerCommand {
             name = "docker imahe push"
             id = "docker_imahe_push"
             commandType = push {
