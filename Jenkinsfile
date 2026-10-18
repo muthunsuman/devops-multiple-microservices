@@ -21,8 +21,8 @@ pipeline {
         K8S_NAMESPACE        = 'dev'
         ECR_REPOSITORY       = 'devopsmultiplemicroservice'
         DOCKERFILE           = 'docker/Dockerfile'
-        SONAR_HOST_URL       = 'http://172.31.45.27:9000'
-        SONAR_CREDENTIALS_ID = 'api-gateway-sonarqube-token'
+        SONAR_HOST_URL       = 'http://13.211.90.188:9000'
+        SONAR_CREDENTIALS_ID = 'sonarqube-token'
     }
 
     stages {
@@ -191,51 +191,50 @@ pipeline {
             }
         }
 
-        stage('SonarQube Analysis and Quality Gate') {
-            when {
-                expression { return !!env.BUILD_SERVICES?.trim() }
-            }
-            steps {
-                script {
-                    env.BUILD_SERVICES.split(',').each { serviceName ->
-                        def service = serviceName.trim()
+        
+stage('SonarQube Analysis and Quality Gate') {
+    when {
+        expression { return !!env.BUILD_SERVICES?.trim() }
+    }
+    steps {
+        script {
+            env.BUILD_SERVICES.split(',').each { serviceName ->
+                def service = serviceName.trim()
 
-                        withEnv(["SERVICE_NAME=${service}"]) {
-                            dir("services/${service}") {
-                                withCredentials([
-                                    string(
-                                        credentialsId: "${SONAR_CREDENTIALS_ID}",
-                                        variable: 'SONAR_TOKEN'
-                                    )
-                                ]) {
-                                    sh '''
-                                        set -eu
-                                        echo "Analyzing service: $SERVICE_NAME"
-                                        echo "SonarQube URL: $SONAR_HOST_URL"
-
-                                        mvn -B \
-                                            org.sonarsource.scanner.maven:sonar-maven-plugin:5.3.0.6276:sonar \
-                                            -Dsonar.host.url="$SONAR_HOST_URL" \
-                                            -Dsonar.token="$SONAR_TOKEN" \
-                                            -Dsonar.projectKey="devops-$SERVICE_NAME" \
-                                            -Dsonar.projectName="$SERVICE_NAME"
-                                    '''
-                                }
-                            }
-                        }
-
-                        timeout(time: 10, unit: 'MINUTES') {
-                            def qualityGate = waitForQualityGate()
-                            echo "Quality gate for ${service}: ${qualityGate.status}"
-                            if (qualityGate.status != 'OK') {
-                                error("SonarQube quality gate failed for ${service}: ${qualityGate.status}")
+                withEnv(["SERVICE_NAME=${service}"]) {
+                    dir("services/${service}") {
+                        withSonarQubeEnv('SonarQubeServer') {
+                            withCredentials([
+                                string(
+                                    credentialsId: "${SONAR_CREDENTIALS_ID}",
+                                    variable: 'SONAR_TOKEN'
+                                )
+                            ]) {
+                                sh '''
+                                    set -eu
+                                    mvn -B \
+                                      org.sonarsource.scanner.maven:sonar-maven-plugin:5.3.0.6276:sonar \
+                                      -Dsonar.token="$SONAR_TOKEN" \
+                                      -Dsonar.projectKey="devops-$SERVICE_NAME" \
+                                      -Dsonar.projectName="$SERVICE_NAME"
+                                '''
                             }
                         }
                     }
                 }
+
+                timeout(time: 10, unit: 'MINUTES') {
+                    def qg = waitForQualityGate()
+                    echo "Quality Gate for ${service}: ${qg.status}"
+
+                    if (qg.status != 'OK') {
+                        error("Quality Gate failed for ${service}: ${qg.status}")
+                    }
+                }
             }
         }
-
+    }
+}
         stage('Ensure ECR Repository and Login') {
             when {
                 expression { return !!env.BUILD_SERVICES?.trim() }
