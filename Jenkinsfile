@@ -194,7 +194,9 @@ pipeline {
         
 stage('SonarQube Analysis and Quality Gate') {
     when {
-        expression { return !!env.BUILD_SERVICES?.trim() }
+        expression {
+            return !!env.BUILD_SERVICES?.trim()
+        }
     }
     steps {
         script {
@@ -206,14 +208,16 @@ stage('SonarQube Analysis and Quality Gate') {
                         withSonarQubeEnv('SonarQubeServer') {
                             withCredentials([
                                 string(
-                                    credentialsId: "${SONAR_CREDENTIALS_ID}",
+                                    credentialsId: 'sonarqube-token',
                                     variable: 'SONAR_TOKEN'
                                 )
                             ]) {
                                 sh '''
                                     set -eu
+
                                     mvn -B \
                                       org.sonarsource.scanner.maven:sonar-maven-plugin:5.3.0.6276:sonar \
+                                      -Dsonar.host.url="$SONAR_HOST_URL" \
                                       -Dsonar.token="$SONAR_TOKEN" \
                                       -Dsonar.projectKey="devops-$SERVICE_NAME" \
                                       -Dsonar.projectName="$SERVICE_NAME"
