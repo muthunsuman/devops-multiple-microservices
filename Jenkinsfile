@@ -222,11 +222,12 @@ pipeline {
                                         sh '''
                                             set -eu
 
-                                            mvn -B sonar:sonar \
-                                                -Dsonar.host.url="$SONAR_HOST_URL" \
-                                                -Dsonar.token="$SONAR_TOKEN" \
-                                                -Dsonar.projectKey="devops-$SERVICE_NAME" \
-                                                -Dsonar.projectName="$SERVICE_NAME"
+                                           mvn -B \
+  org.sonarsource.scanner.maven:sonar-maven-plugin:5.3.0.6276:sonar \
+  -Dsonar.host.url="$SONAR_HOST_URL" \
+  -Dsonar.token="$SONAR_TOKEN" \
+  -Dsonar.projectKey="devops-$SERVICE_NAME" \
+  -Dsonar.projectName="$SERVICE_NAME"
                                         '''
                                     }
                                 }
@@ -239,32 +240,52 @@ pipeline {
             }
         }
 
-        stage('SonarQube Quality Gate') {
-            when {
-                expression { return !!env.BUILD_SERVICES?.trim() }
-            }
-            steps {
-                script {
-                    def tasks = [:]
+      stage('SonarQube Analysis and Quality Gate') {
+    when {
+        expression {
+            return !!env.BUILD_SERVICES?.trim()
+        }
+    }
+    steps {
+        script {
+            env.BUILD_SERVICES.split(',').each { serviceName ->
+                def service = serviceName.trim()
 
-                    env.BUILD_SERVICES.split(',').each { serviceName ->
-                        def service = serviceName.trim()
+                withEnv(["SERVICE_NAME=${service}"]) {
+                    dir("services/${service}") {
+                        withCredentials([
+                            string(
+                                credentialsId: "${SONAR_CREDENTIALS_ID}",
+                                variable: 'SONAR_TOKEN'
+                            )
+                        ]) {
+                            sh '''
+                                set -eu
 
-                        tasks[service] = {
-                            withEnv(["SERVICE_NAME=${service}"]) {
-                                dir("services/${service}") {
-                                    timeout(time: 10, unit: 'MINUTES') {
-                                        waitForQualityGate abortPipeline: true
-                                    }
-                                }
-                            }
+                                mvn -B \
+                                  org.sonarsource.scanner.maven:sonar-maven-plugin:5.3.0.6276:sonar \
+                                  -Dsonar.host.url="$SONAR_HOST_URL" \
+                                  -Dsonar.token="$SONAR_TOKEN" \
+                                  -Dsonar.projectKey="devops-$SERVICE_NAME" \
+                                  -Dsonar.projectName="$SERVICE_NAME"
+                            '''
                         }
                     }
+                }
 
-                    parallel tasks
+                timeout(time: 10, unit: 'MINUTES') {
+                    def qualityGate = waitForQualityGate()
+
+                    echo "Quality gate for ${service}: ${qualityGate.status}"
+
+                    if (qualityGate.status != 'OK') {
+                        error("SonarQube quality gate failed for ${service}: ${qualityGate.status}")
+                    }
                 }
             }
         }
+    }
+}
 
         stage('Ensure ECR Repository') {
             when {
