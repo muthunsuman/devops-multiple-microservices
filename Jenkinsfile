@@ -27,7 +27,7 @@ pipeline {
         DOCKERFILE     = 'docker/Dockerfile'
 
         SONAR_HOST_URL = 'http://15.21.190.188:9000'
-        SONAR_CREDENTIALS_ID = 'sonarqube-token'
+        SONAR_CREDENTIALS_ID = 'api-gateway-sonarqube-token'
     }
 
     stages {
