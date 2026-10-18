@@ -26,7 +26,7 @@ pipeline {
         ECR_REPOSITORY = 'devopsmultiplemicroservice'
         DOCKERFILE     = 'docker/Dockerfile'
 
-        SONAR_HOST_URL = 'http://15.21.190.188:9000'
+        SONAR_HOST_URL = 'http://13.211.90.188:9000'
         SONAR_CREDENTIALS_ID = 'api-gateway-sonarqube-token'
     }
 
@@ -222,12 +222,11 @@ pipeline {
                                         sh '''
                                             set -eu
 
-                                           mvn -B \
-  org.sonarsource.scanner.maven:sonar-maven-plugin:5.3.0.6276:sonar \
-  -Dsonar.host.url="$SONAR_HOST_URL" \
-  -Dsonar.token="$SONAR_TOKEN" \
-  -Dsonar.projectKey="devops-$SERVICE_NAME" \
-  -Dsonar.projectName="$SERVICE_NAME"
+                                          mvn clean verify org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
+  -Dsonar.projectKey=api-gateway \
+  -Dsonar.projectName='api-gateway' \
+  -Dsonar.host.url=http://13.211.90.188:9000 \
+  -Dsonar.token=sqp_d6b06ca4bb7e1f703e292eb306e006e1ba2db74f
                                         '''
                                     }
                                 }
@@ -246,6 +245,7 @@ pipeline {
             return !!env.BUILD_SERVICES?.trim()
         }
     }
+    
     steps {
         script {
             env.BUILD_SERVICES.split(',').each { serviceName ->
@@ -262,12 +262,11 @@ pipeline {
                             sh '''
                                 set -eu
 
-                                mvn -B \
-                                  org.sonarsource.scanner.maven:sonar-maven-plugin:5.3.0.6276:sonar \
-                                  -Dsonar.host.url="$SONAR_HOST_URL" \
-                                  -Dsonar.token="$SONAR_TOKEN" \
-                                  -Dsonar.projectKey="devops-$SERVICE_NAME" \
-                                  -Dsonar.projectName="$SERVICE_NAME"
+                              mvn clean verify org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
+  -Dsonar.projectKey=api-gateway \
+  -Dsonar.projectName='api-gateway' \
+  -Dsonar.host.url=http://13.211.90.188:9000 \
+  -Dsonar.token=sqp_d6b06ca4bb7e1f703e292eb306e006e1ba2db74f
                             '''
                         }
                     }
