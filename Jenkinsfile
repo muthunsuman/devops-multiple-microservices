@@ -26,7 +26,7 @@ pipeline {
         ECR_REPOSITORY = 'devopsmultiplemicroservice'
         DOCKERFILE     = 'docker/Dockerfile'
 
-        SONAR_HOST_URL = 'http://YOUR_SONARQUBE_HOST:9000'
+        SONAR_HOST_URL = 'http://15.21.190.188:9000'
         SONAR_CREDENTIALS_ID = 'sonarqube-token'
     }
 
